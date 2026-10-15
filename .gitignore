@@ -1,0 +1,16 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/launch.json
+.workbuddy/
+resources/pets/**/_raw/
+resources/pets/**/*.tmp.png
+
+# 调试脚本 / 出图中间产物（.tmp 下常有 100MB+ 的备份条带，不进仓库）
+.tmp/
+*.tsbuildinfo

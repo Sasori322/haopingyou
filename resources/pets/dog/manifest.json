@@ -1,0 +1,36 @@
+{
+  "id": "dog",
+  "name": "小柴犬",
+  "nickname": "麻薯",
+  "kind": "dog",
+  "version": 1,
+  "author": "builtin",
+  "canvas": { "w": 200, "h": 260 },
+  "scale": 1,
+  "anchor": { "x": 0.5, "y": 1 },
+  "hitbox": { "x": 32, "y": 78, "w": 138, "h": 182 },
+  "defaultAnimation": "idle",
+  "animations": {
+    "idle": { "mode": "sheet", "src": "idle.png", "frames": 6, "fps": 6, "loop": true, "interruptible": true },
+    "walk": { "mode": "sheet", "src": "walk.png", "frames": 8, "fps": 12, "loop": true, "interruptible": true },
+    "sleep": { "mode": "sheet", "src": "sleep.png", "frames": 4, "fps": 3, "loop": true, "interruptible": true },
+    "click": { "mode": "sheet", "src": "click.png", "frames": 6, "fps": 14, "loop": false, "interruptible": false, "next": "idle" },
+    "drag": { "mode": "sheet", "src": "drag.png", "frames": 4, "fps": 8, "loop": true, "interruptible": false },
+    "eat": { "mode": "sheet", "src": "eat.png", "frames": 8, "fps": 10, "loop": false, "interruptible": false, "next": "idle" },
+    "rest": { "mode": "sheet", "src": "rest.png", "frames": 6, "fps": 8, "loop": true, "interruptible": true },
+    "hot": { "mode": "sheet", "src": "hot.png", "frames": 6, "fps": 9, "loop": true, "interruptible": true },
+    "focus": { "mode": "sheet", "src": "focus.png", "frames": 6, "fps": 5, "loop": true, "interruptible": true }
+  },
+  "bubbles": {
+    "idle": ["汪…有点无聊", "陪我玩会儿？", "你在忙什么呀"],
+    "click": ["汪！别戳啦", "我在我在！", "摸头可以，收费的"],
+    "drag": ["放我下来！", "晃晃悠悠的，晕了", "我要告状！"],
+    "drop": ["呼，就这儿吧", "又把我扔在这儿", "这地方挺好"],
+    "walk": ["出去遛遛", "跑两步", "散步时间到"],
+    "sleep": ["趴一会儿…", "zzZ…", "别打扰我"],
+    "eat": ["吃饭啦！", "这个好吃！"],
+    "rest": ["起来活动一下吧", "喝口水再继续", "肩膀该放松了"],
+    "hot": ["有点烫，风扇转起来了", "慢一点，我跟不上了", "机器要休息了"],
+    "focus": ["我陪你一起专注", "专心干活，我看着呢", "这段时间不分心"]
+  }
+}

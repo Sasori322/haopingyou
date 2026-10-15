@@ -1,0 +1,290 @@
+* {
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  /* 默认不接收鼠标：只有命中区元素才 pointer-events: auto */
+  pointer-events: none;
+}
+
+#app {
+  position: relative;
+}
+
+.pet-hit {
+  pointer-events: auto;
+}
+
+/*
+ * 鼠标跟随的变换层。
+ * 单独包一层是为了不跟 .pet-sheet 自己的「镜像」变换、以及 .pet-sprite 上的状态关键帧打架：
+ * 那些动画都在内层元素上，这一层只负责整体的位移与倾角。
+ * transform-origin 放在脚底中心 —— 宠物是"踩着地面往光标方向偏一下"，而不是原地旋转。
+ */
+.pet-gaze {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+/* 序列帧画布：尺寸与镜像由内联样式给出（依赖 manifest.canvas 与 facing） */
+.pet-sheet {
+  display: block;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+/* 素材缺失时的占位形象容器：底部居中的正方形，与 SVG 的 200×200 viewBox 对齐 */
+.pet-fallback {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  aspect-ratio: 1 / 1;
+}
+
+.pet-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  transform: scale(var(--pet-scale, 1));
+  transform-origin: 50% 100%;
+}
+
+.pet-sprite {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+
+.pet-flip {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 50%;
+  transition: transform 120ms linear;
+}
+
+/* ---------------- 状态动画 ---------------- */
+
+.pet-sprite[data-state='idle'] {
+  animation: pet-breathe 2.4s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='walk'] {
+  animation: pet-walk 0.5s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='sleep'] {
+  animation: pet-sleep 3.6s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='drag'] {
+  animation: pet-dangle 0.9s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='click'] {
+  animation: pet-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pet-sprite[data-state='eat'] {
+  animation: pet-eat 0.55s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='hot'] {
+  animation: pet-pant 0.7s ease-in-out infinite;
+}
+
+.pet-sprite[data-state='rest'] {
+  animation: pet-rest 0.8s ease-in-out infinite;
+}
+
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.008, 0.992);
+  }
+}
+
+@keyframes pet-walk {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.6deg);
+  }
+  25% {
+    transform: translateY(-4px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(0) rotate(1.6deg);
+  }
+  75% {
+    transform: translateY(-4px) rotate(0deg);
+  }
+}
+
+@keyframes pet-sleep {
+  0%,
+  100% {
+    transform: scale(1, 1) translateY(0);
+  }
+  50% {
+    transform: scale(1.02, 0.975) translateY(3px);
+  }
+}
+
+@keyframes pet-dangle {
+  0%,
+  100% {
+    transform: rotate(-5deg) translateY(0);
+  }
+  50% {
+    transform: rotate(5deg) translateY(-2px);
+  }
+}
+
+@keyframes pet-pop {
+  0% {
+    transform: scale(1, 1);
+  }
+  35% {
+    transform: scale(1.14, 0.88) translateY(4px);
+  }
+  70% {
+    transform: scale(0.94, 1.08) translateY(-6px);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+@keyframes pet-eat {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(6px) rotate(-3deg);
+  }
+}
+
+@keyframes pet-pant {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(1.04, 0.96) translateY(-2px);
+  }
+}
+
+@keyframes pet-rest {
+  0%,
+  100% {
+    transform: translateY(0) scale(1.02, 0.98);
+  }
+  50% {
+    transform: translateY(-6px) scale(0.99, 1.02);
+  }
+}
+
+/* ---------------- 气泡 ---------------- */
+
+.bubble {
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  transform: translateX(-50%);
+  max-width: 200px;
+  padding: 7px 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  color: #303133;
+  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+  animation: bubble-in 0.18s ease-out;
+}
+
+.bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: rgba(255, 255, 255, 0.97);
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  transform: rotate(45deg);
+}
+
+.bubble[data-leaving='true'] {
+  animation: bubble-out 0.22s ease-in forwards;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes bubble-out {
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px) scale(0.94);
+  }
+}
+
+/* ---------------- 专注进度环 ---------------- */
+
+.focus-ring {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 132px;
+  height: 24px;
+  margin-left: -66px;
+  pointer-events: none;
+}
+
+.focus-badge {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--el-color-primary, #e1251b);
+  color: #fff;
+  font-family: 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 11px;
+  line-height: 16px;
+  pointer-events: none;
+  white-space: nowrap;
+}

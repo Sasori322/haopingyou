@@ -1,0 +1,45 @@
+appId: com.haopingyou.desktop
+productName: 好屏友
+directories:
+  buildResources: build
+  output: release
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!tools/*'
+  - '!resources/*'
+  - '!release/*'
+  - '!docs/*'
+  - '!.workbuddy/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{.npmrc,.gitignore,README.md,CHANGELOG.md}'
+  - '!screenshot*.png'
+extraResources:
+  - from: resources/pets
+    to: pets
+  - from: resources/icons
+    to: icons
+asar: true
+compression: normal
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 好屏友
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-${version}-setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

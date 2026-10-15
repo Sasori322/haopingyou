@@ -1,0 +1,110 @@
+{
+  "id": "cat",
+  "name": "小橘猫",
+  "nickname": "橘子",
+  "kind": "cat",
+  "version": 2,
+  "author": "builtin",
+  "canvas": { "w": 200, "h": 260 },
+  "scale": 1,
+  "anchor": { "x": 0.5, "y": 1 },
+  "hitbox": { "x": 32, "y": 78, "w": 138, "h": 182 },
+  "defaultAnimation": "idle",
+  "animations": {
+    "idle": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    },
+    "walk": {
+      "mode": "sheet",
+      "src": "walk.png",
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 9, "y": 116.5, "w": 182, "h": 143.5 }
+    },
+    "sleep": {
+      "mode": "sheet",
+      "src": "sleep.png",
+      "frames": 4,
+      "fps": 3,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 35, "y": 164.5, "w": 130, "h": 95.5 }
+    },
+    "click": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 16,
+      "loop": false,
+      "interruptible": false,
+      "next": "idle",
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    },
+    "drag": {
+      "mode": "sheet",
+      "src": "drag.png",
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "interruptible": false,
+      "bounds": { "x": 37, "y": 9, "w": 126.5, "h": 251 }
+    },
+    "eat": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 10,
+      "loop": false,
+      "interruptible": false,
+      "next": "idle",
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    },
+    "rest": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 7,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    },
+    "hot": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 9,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    },
+    "focus": {
+      "mode": "sheet",
+      "src": "stand.png",
+      "frames": 4,
+      "fps": 5,
+      "loop": true,
+      "interruptible": true,
+      "bounds": { "x": 31.5, "y": 78, "w": 137.5, "h": 182 }
+    }
+  },
+  "bubbles": {
+    "idle": ["有点无聊…", "要不要歇一会儿？", "今天过得怎么样？"],
+    "click": ["喵~ 别戳我啦", "在的在的", "今天也要加油哦", "摸头要收费的"],
+    "drag": ["喂——放我下来！", "别晃了别晃了", "我恐高！"],
+    "drop": ["呼，就放这儿吧", "又把我扔这儿", "这个位置还不错"],
+    "walk": ["出去遛遛", "走两步", "巡视一下领地"],
+    "sleep": ["困了…先眯一会儿", "zzZ…", "别吵我哈"],
+    "eat": ["开饭啦！", "好吃好吃"],
+    "rest": ["起来走两步吧", "该喝水啦！", "眼睛也该歇歇了"],
+    "hot": ["CPU 好像有点烫…", "好热，风扇都转起来了", "慢一点，我跟不上了"],
+    "focus": ["我陪你一起专注", "别分心，我盯着你呢", "这段时间专心点哦"]
+  }
+}

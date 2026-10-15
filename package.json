@@ -1,0 +1,45 @@
+{
+  "name": "haopingyou",
+  "version": "0.1.0",
+  "description": "好屏友 - Windows 桌面宠物",
+  "main": "./out/main/index.js",
+  "private": true,
+  "author": "rt-mart",
+  "scripts": {
+    "dev": "node tools/electron-vite-run.mjs dev",
+    "dev:watch": "node tools/electron-vite-run.mjs dev --watch",
+    "build": "node tools/electron-vite-run.mjs build",
+    "start": "node tools/electron-vite-run.mjs preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "assets:check": "node tools/validate-pet.mjs",
+    "assets:cutout": "node tools/cutout.mjs",
+    "assets:equalize": "node tools/equalize-frames.mjs",
+    "assets:preview": "node tools/preview-frames.mjs",
+    "assets:anchor": "node tools/make-anchor.mjs",
+    "assets:slice": "node tools/slice-spritesheet.mjs",
+    "assets:normalize": "node tools/normalize-anchor.mjs",
+    "icons:build": "node tools/make-icons.mjs",
+    "pack:dir": "npm run build && electron-builder --win --dir",
+    "build:win": "npm run build && electron-builder --win --x64",
+    "build:portable": "npm run build && electron-builder --win portable --x64"
+  },
+  "dependencies": {
+    "electron-store": "^12.0.0",
+    "systeminformation": "^5.33.15"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "element-plus": "^2.14.7",
+    "pinia": "^4.0.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4",
+    "vue-tsc": "^3.3.13"
+  }
+}
