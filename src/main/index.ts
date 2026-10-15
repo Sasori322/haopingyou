@@ -130,6 +130,7 @@ function onReady(): void {
   maybeForceState()
   maybeCapturePetWindow(petWindow)
   maybeProbeSettingsWindow()
+  maybeCaptureSettingsWindow()
   maybeVerifyPointerBridge()
 
   watchDisplayAndPower()
@@ -267,6 +268,75 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
             })
         )
     }, 1500)
+  })
+}
+
+/**
+ * 开发期诊断：设置 HPY_CAPTURE_SETTINGS=<png 输出路径> 时，打开设置窗口、切到指定路由
+ * （HPY_CAPTURE_SETTINGS_ROUTE，默认 /pet），等渲染稳定后截取窗口内容并退出。
+ *
+ * 用途：`HPY_CAPTURE_PET` 只能截宠物窗口，而设置页这类**版式类改动**（卡片尺寸 / 间距 / 字号）
+ * 离线比对 HTML 说明不了问题，只能看真实渲染；偏偏设置页的唯一入口是托盘菜单，手工路径太长。
+ * 与 HPY_CAPTURE_PET 对称，同样是「按需截图后退出」，只在开发期生效。
+ *
+ * 需要验证「点开之后长什么样」时，用 `HPY_CAPTURE_SETTINGS_CLICK=<CSS 选择器>` 先点一下再截；
+ * 若是输入框类弹窗，再配 `HPY_CAPTURE_SETTINGS_TYPE=<文字>` 填值并点「保存」，就能端到端跑通
+ * 一次真实提交（而不是只看弹窗长得对不对）。
+ */
+function maybeCaptureSettingsWindow(): void {
+  const target = process.env['HPY_CAPTURE_SETTINGS']
+  if (!target) return
+  const route = process.env['HPY_CAPTURE_SETTINGS_ROUTE'] ?? '/pet'
+  const clickSelector = process.env['HPY_CAPTURE_SETTINGS_CLICK'] ?? ''
+  const typing = process.env['HPY_CAPTURE_SETTINGS_TYPE'] ?? ''
+  const win = openSettingsWindow()
+  win.webContents.on('console-message', (event) => {
+    log.info(`[settings:${event.level}] ${event.message}`)
+  })
+  win.webContents.once('did-finish-load', () => {
+    // 切路由必须等首屏挂载完再动手：did-finish-load 早于 Vue 挂载，此时改 hash 会被
+    // 默认路由的重定向覆盖掉（实测截图会停在 /general）。切完再轮询等卡片渲染出来。
+    const prepare = `(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900))
+      location.hash = '#' + ${JSON.stringify(route)}
+      for (let i = 0; i < 40; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        if (document.querySelectorAll('.pet-card').length > 0) break
+      }
+      const selector = ${JSON.stringify(clickSelector)}
+      const typing = ${JSON.stringify(typing)}
+      if (selector) {
+        const el = document.querySelector(selector)
+        if (el) el.click()
+        await new Promise((resolve) => setTimeout(resolve, 800))
+        if (typing !== '') {
+          const input = document.querySelector('.el-message-box__input input')
+          if (input) {
+            input.value = typing
+            // Vue 的 v-model 靠 input 事件，直接改 value 不会同步
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            await new Promise((resolve) => setTimeout(resolve, 200))
+            const save = [...document.querySelectorAll('.el-message-box__btns button')]
+              .find((b) => (b.innerText || '').includes('保存'))
+            if (save) save.click()
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        return el ? 'clicked ' + selector : 'NOT_FOUND ' + selector
+      }
+      return document.querySelectorAll('.pet-card').length
+    })()`
+    void win.webContents
+      .executeJavaScript(prepare, true)
+      .then(async (cards: unknown) => {
+        log.info(`[截图] 设置页路由 ${route}，页面上宠物卡片 ${cards} 张`)
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        const image = await win.webContents.capturePage()
+        writeFileSync(target, image.toPNG())
+        log.info(`[截图] 已写入 ${target}`)
+      })
+      .catch((error: unknown) => log.warn('设置窗口截图失败', error))
+      .then(() => app.quit())
   })
 }
 

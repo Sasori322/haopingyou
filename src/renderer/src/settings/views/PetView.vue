@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { DEFAULT_SETTINGS } from '@shared/constants'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { DEFAULT_SETTINGS, PET_NAME_MAX } from '@shared/constants'
 import type { ImmersiveStatus, PetSummary } from '@shared/types/pet'
 import { useSettings } from '../composables/useSettings'
 
@@ -18,10 +18,41 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * 对外称呼：用户自定义名字优先，空串回退 manifest 的默认昵称。
+ *
+ * 直接读 settings 而不是 `pet.nickname`，是为了改名后**立刻**反映到卡片上——
+ * settings 是响应式的，不必等重新扫描宠物目录。
+ */
+function displayNameOf(pet: PetSummary): string {
+  return settings.value?.petNames?.[pet.id]?.trim() || pet.nickname
+}
+
 async function choose(pet: PetSummary): Promise<void> {
   await window.petAPI.setActivePet(pet.id)
   await patch({ activePetId: pet.id })
-  ElMessage.success(`已换成${pet.nickname}`)
+  ElMessage.success(`已换成${displayNameOf(pet)}`)
+}
+
+/** 改名：留空即恢复 manifest 默认昵称（主进程会把空串原样存下来表示"用默认"） */
+async function rename(pet: PetSummary): Promise<void> {
+  const current = displayNameOf(pet)
+  try {
+    const result = await ElMessageBox.prompt('给它起个新叫法，留空则恢复默认', `给「${current}」改名`, {
+      inputValue: current,
+      inputValidator: (value) =>
+        (value ?? '').trim().length <= PET_NAME_MAX || `最多 ${PET_NAME_MAX} 个字符`,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消'
+    })
+    const next = (result.value ?? '').trim()
+    await patch({ petNames: { ...(settings.value?.petNames ?? {}), [pet.id]: next } })
+    // 主进程的 PetSummary.nickname 也带这套覆盖逻辑，重扫一次让两边口径保持一致
+    await refresh()
+    ElMessage.success(next ? `以后就叫它「${next}」啦` : '已恢复默认称呼')
+  } catch {
+    // 用户取消，什么都不做
+  }
 }
 
 // ---------------- 鼠标跟随 ----------------
@@ -104,10 +135,8 @@ onBeforeUnmount(() => {
 <template>
   <h2 class="page-title">宠物</h2>
   <p class="page-desc">
-    宠物由 <code>resources/pets/&lt;id&gt;/manifest.json</code> 驱动，内置与用户导入的宠物同构。
-    卡片上的名字取自 manifest 的 <code>nickname</code> 字段，系统通知与托盘提示也用它——
-    想换个叫法，改这一处就够了。
-    素材缺失时渲染层会回退为内置占位形象。
+    点卡片切换宠物；点名字旁的 ✎ 可以改个叫法，系统通知与托盘提示会一起跟着变（留空恢复默认）。
+    宠物由 <code>resources/pets/&lt;id&gt;/manifest.json</code> 驱动，素材缺失时渲染层回退为内置占位形象。
   </p>
 
   <el-card class="section-card" shadow="never" v-loading="loading">
@@ -120,17 +149,18 @@ onBeforeUnmount(() => {
         :class="{ 'pet-card--active': pet.id === settings?.activePetId }"
         @click="choose(pet)"
       >
-        <div class="pet-card__name">{{ pet.nickname }}</div>
-        <div class="pet-card__meta">
+        <div class="pet-card__head">
+          <span class="pet-card__name">{{ displayNameOf(pet) }}</span>
           <el-tag size="small" :type="pet.kind === 'dog' ? 'warning' : 'success'" effect="light">
             {{ pet.name }}
           </el-tag>
-          <el-tag size="small" type="info" effect="plain">
-            {{ pet.source === 'user' ? '用户导入' : '内置' }}
+          <el-tag v-if="pet.source === 'user'" size="small" type="info" effect="plain">
+            用户导入
           </el-tag>
+          <button class="pet-card__rename" title="改个名字" @click.stop="rename(pet)">✎</button>
         </div>
-        <div class="pet-card__status">
-          {{ pet.hasAssets ? '序列帧素材就绪' : '素材待补充 · 当前显示占位形象' }}
+        <div v-if="!pet.hasAssets" class="pet-card__status" title="素材缺失，桌面上将以内置占位形象显示">
+          素材待补充
         </div>
       </div>
     </div>
@@ -230,14 +260,14 @@ onBeforeUnmount(() => {
 <style scoped>
 .pet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 10px;
 }
 
 .pet-card {
   border: 1.5px solid #e6e8eb;
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: 9px;
+  padding: 9px 11px;
   cursor: pointer;
   transition: all 0.16s ease;
   background: #fff;
@@ -253,21 +283,49 @@ onBeforeUnmount(() => {
   background: rgba(225, 37, 27, 0.04);
 }
 
-.pet-card__name {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 9px;
+/* 名字与标签同排，靠 flex-wrap 在窄卡片里自动折行 */
+.pet-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
-.pet-card__meta {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 9px;
+.pet-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-right: 1px;
+}
+
+/* 改名入口：常驻但压得很淡，hover 卡片时才提亮——主交互仍然是"点卡片切换宠物" */
+.pet-card__rename {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--el-text-color-placeholder, #c0c4cc);
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.pet-card__rename:hover {
+  color: var(--el-color-primary, #e1251b);
+}
+
+/* 标签统一压小，避免把卡片撑高 */
+.pet-card :deep(.el-tag) {
+  height: 19px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 17px;
 }
 
 .pet-card__status {
-  font-size: 12px;
-  color: #909399;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--el-color-warning, #e6a23c);
 }
 
 /* setting-row 是 space-between 的 flex，控件这一侧要给固定宽度，否则滑块会被压成 0 */

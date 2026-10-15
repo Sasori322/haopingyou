@@ -10,6 +10,7 @@ import type {
   SpeakPayload
 } from '../../shared/types/pet'
 import { createLogger } from '../utils/logger'
+import { getSettings } from '../services/settingsService'
 import { BehaviorScheduler } from './behaviorScheduler'
 import { PetController } from './petController'
 import { getPet, toReloadPayload, type PetRecord } from './petLibrary'
@@ -99,7 +100,7 @@ export class PetApp {
   }
 
   /**
-   * 对外称呼：优先昵称（"橘子"），没有昵称就退成品名（"小橘猫"）。
+   * 对外称呼：优先用户自定义的名字，其次昵称（"橘子"），再退成品名（"小橘猫"）。
    *
    * 系统通知、托盘提示这类「宠物在跟你说话」的场合统一走这里，不要再各自去读
    * `manifest.name` —— 否则加一只新宠物就会出现三处口径不一致（一处叫品种名、
@@ -107,7 +108,8 @@ export class PetApp {
    */
   get displayName(): string {
     const manifest = this.record?.manifest
-    return manifest?.nickname || manifest?.name || PRODUCT_NAME
+    const custom = this.record ? getSettings().petNames?.[this.record.id]?.trim() : ''
+    return custom || manifest?.nickname || manifest?.name || PRODUCT_NAME
   }
 
   get manifest(): PetManifest | null {

@@ -1,7 +1,7 @@
 import { app, ipcMain } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
-import { PET_SCALE_MAX, PET_SCALE_MIN } from '../../shared/constants'
+import { PET_NAME_MAX, PET_SCALE_MAX, PET_SCALE_MIN } from '../../shared/constants'
 import { IPC } from '../../shared/ipc'
 import type { PetState } from '../../shared/types/pet'
 import type { AppSettings } from '../../shared/types/settings'
@@ -141,6 +141,26 @@ function sanitizeSettingsPatch(raw: unknown): Partial<AppSettings> {
 
   const activePetId = asString(input.activePetId, 64)
   if (activePetId !== null) out.activePetId = activePetId
+
+  // 宠物自定义昵称：key 是宠物 id（与 activePetId 同口径），值是用户输入的名字。
+  // 两点讲究：① 先剥掉控制字符再 trim —— 名字会进托盘 tooltip 和通知标题，一个换行就把版式顶坏；
+  // ② 空串是**合法值**，语义为「恢复 manifest 默认昵称」，所以不能把空值过滤掉。
+  const petNames = input.petNames as Record<string, unknown> | undefined
+  if (petNames && typeof petNames === 'object' && !Array.isArray(petNames)) {
+    const next: Record<string, string> = {}
+    for (const [id, value] of Object.entries(petNames)) {
+      if (typeof value !== 'string') continue
+      if (id.length === 0 || id.length > 64) continue
+      const text = value.replace(/[\u0000-\u001F\u007F]/g, '').trim()
+      if (text.length > PET_NAME_MAX) {
+        log.warn('宠物昵称被拒：过长', id, text.length, '字')
+        continue
+      }
+      next[id] = text
+    }
+    if (Object.keys(next).length > 0) out.petNames = next
+  }
+
   const petVisible = asBool(input.petVisible)
   if (petVisible !== null) out.petVisible = petVisible
   const alwaysOnTop = asBool(input.alwaysOnTop)

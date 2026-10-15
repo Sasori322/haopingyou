@@ -97,6 +97,14 @@ export interface ImmersiveSettings {
 export interface AppSettings {
   /** 当前选中的宠物 id */
   activePetId: string
+  /**
+   * 用户给宠物起的自定义名字，key 为宠物 id，**空字符串表示"用 manifest 的默认昵称"**。
+   *
+   * 为什么不直接改 manifest：内置宠物的目录在 app 安装目录下，打包后是只读的；
+   * 而且 settings.json 本来就有「白名单校验 + 原子落盘 + 变更广播」这一整套机制，
+   * 复用比再开一条存储链路省事得多。
+   */
+  petNames: Record<string, string>
   /** 宠物是否可见 */
   petVisible: boolean
   /**

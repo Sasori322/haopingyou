@@ -5,7 +5,7 @@
 - 技术栈：**Electron 44 + Vue 3 + TypeScript**（electron-vite 构建）
 - 平台：**仅 Windows**
 - 产品名：好屏友（`appId: com.haopingyou.desktop`）
-- 内置宠物：**橘子（小橘猫 `cat`）/ 麻薯（小柴犬 `dog`）/ 蓝莓（暹罗猫 `siamese`）**
+- 内置宠物：**橘子（小橘猫 `cat`）/ 麻薯（小柴犬 `dog`）/ 小可（暹罗猫 `siamese`）**
   —— 小橘猫与暹罗猫已出齐素材，小柴犬暂时回退内置 SVG 占位形象
 - 宠物素材：AI 生成的序列帧，可爱平涂插画风格
 
@@ -157,7 +157,8 @@ resources/pets/cat/
 约定：
 
 - `id` 必须与目录名一致；`name` 是**品种名**（"小橘猫"），`nickname` 是**对外称呼**（"橘子"）。
-  系统通知、托盘提示、设置页卡片都优先用 `nickname`，缺省回退 `name` —— 改个昵称就只用改这一处
+  系统通知、托盘提示、设置页卡片都优先用 `nickname`，缺省回退 `name`。
+  ⚠️ `nickname` 只是**默认值**：用户可以在设置页卡片上点 ✎ 改名（存进 `settings.petNames`），优先级高于 manifest
 - **sheet 一律水平单行**（解析零歧义、切片最稳）；`frameW = img.width / frames`
 - 逻辑画布是 **200×260 DIP**（**非正方形**），帧图为其 **2 倍**，即每帧 400×520。
   画布高度必须**装得下最高的姿态**——悬空挣扎比站立高约 43%，用正方形画布会把它裁掉。
@@ -381,7 +382,7 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 开发态通知归属 `electron.exe` 属正常现象——通知**头顶那行小字**是 Windows toast 的「应用名」，
 由 AUMID 解析开始菜单快捷方式得到，开发态没有快捷方式就回落成 `electron.exe`，改标题改不掉它；
 打包安装后会自动变成 `productName`（好屏友）。
-**通知标题不受影响**：投递时统一加上宠物昵称前缀，实际看到的是「蓝莓 · 该喝水啦」。
+**通知标题不受影响**：投递时统一加上宠物昵称前缀，实际看到的是「小可 · 该喝水啦」（昵称可在设置页宠物卡片上点 ✎ 改）。
 
 **右键菜单跑到离宠物很远的地方？**
 `menu.popup({ x, y })` 里的 x / y 是**窗口客户区坐标**（Electron 内部会 `ClientToScreen` 换成屏幕坐标），

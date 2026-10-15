@@ -66,6 +66,15 @@ export const PET_DIR_NAME = 'pets'
 export const PET_SCALE_MIN = 0.5
 export const PET_SCALE_MAX = 1
 
+/**
+ * 宠物自定义昵称的最大长度（按 JS 字符数，中文算 1）。
+ *
+ * 定 12 是因为这个字符串会出现在两个地方，都放不下更长的：托盘 tooltip（后面还跟着状态与
+ * 「已让路 / 免打扰」后缀）、系统通知标题（`昵称 · 提醒内容`）。再长就被系统截断，
+ * 反而看不到完整的提醒内容。
+ */
+export const PET_NAME_MAX = 12
+
 // ---------------- 鼠标跟随 ----------------
 
 /**
@@ -152,6 +161,8 @@ export const DND_PRESET_MINUTES: readonly number[] = [30, 60]
 
 export const DEFAULT_SETTINGS: AppSettings = {
   activePetId: 'cat',
+  // 空对象 = 所有宠物都用 manifest 里的默认昵称
+  petNames: {},
   petVisible: true,
   petScale: 1,
   alwaysOnTop: true,

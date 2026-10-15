@@ -5,6 +5,7 @@ import { PET_DIR_NAME } from '../../shared/constants'
 import type { PetManifest, PetSummary, ReloadPayload } from '../../shared/types/pet'
 import { resourcePath } from '../utils/paths'
 import { createLogger } from '../utils/logger'
+import { getSettings } from '../services/settingsService'
 
 const log = createLogger('petLibrary')
 
@@ -97,10 +98,13 @@ export function listPets(): PetRecord[] {
 }
 
 export function listPetSummaries(): PetSummary[] {
+  // 自定义名字优先（空串表示"用 manifest 默认"）。放在这里而不是渲染层去拼：
+  // `PetSummary.nickname` 的语义本来就是「对外称呼」，谁拿到都该是最终名字。
+  const custom = getSettings().petNames ?? {}
   return listPets().map((record) => ({
     id: record.id,
     name: record.manifest.name,
-    nickname: record.manifest.nickname ?? record.manifest.name,
+    nickname: custom[record.id]?.trim() || record.manifest.nickname || record.manifest.name,
     kind: record.manifest.kind,
     source: record.source,
     hasAssets: record.hasAssets
