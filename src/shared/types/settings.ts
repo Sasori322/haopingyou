@@ -71,6 +71,21 @@ export interface ClipboardSettings {
   hotkey: string
 }
 
+/**
+ * 待办与便签（设置层）。
+ *
+ * 目前只有一项：打开旁挂面板的全局快捷键。数据本身不在设置里——
+ * 待办 / 便签是**业务数据**，存在 `todo/todo.json`（不淘汰、不随设置重置）。
+ */
+export interface TodoSettings {
+  /**
+   * 打开 / 收起待办便签面板的全局快捷键（Electron Accelerator 格式）。
+   * - 空字符串 = 不使用全局快捷键，改为从托盘菜单 / 宠物右键菜单打开。
+   * - 与 `clipboard.hotkey` 同一套校验（format 白名单 + register-noop 试探占用）。
+   */
+  hotkey: string
+}
+
 /** 鼠标跟随：宠物朝光标方向轻微倾斜 / 转头 */
 export interface GazeSettings {
   enabled: boolean
@@ -125,4 +140,5 @@ export interface AppSettings {
   water: WaterSettings
   monitor: MonitorSettings
   clipboard: ClipboardSettings
+  todo: TodoSettings
 }

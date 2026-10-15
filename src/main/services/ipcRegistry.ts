@@ -39,11 +39,11 @@ import {
 } from '../clipboard'
 import {
   endHotkeyRecording,
-  setClipboardHotkey,
+  setHotkey,
   suspendHotkeyForRecording,
   tryHotkey,
   validateHotkeyFormat
-} from '../clipboard/clipboardHotkey'
+} from './globalHotkeys'
 import { petApp } from '../pet/petApp'
 import { listPetSummaries, toReloadPayload } from '../pet/petLibrary'
 import { initTodo, todoAfterWrite, todoRepo, todoSnapshot } from '../todo'
@@ -51,7 +51,7 @@ import { todoReminder } from '../todo/todoReminder'
 import { getPetWindow, setPetVisible } from '../windows/petWindow'
 import { broadcast, openSettingsWindow } from '../windows/settingsWindow'
 import { openClipboardPanel, toggleClipboardPanel } from '../windows/clipboardWindow'
-import { openTodoPanel } from '../windows/todoPanelWindow'
+import { openTodoPanel, toggleTodoPanel } from '../windows/todoPanelWindow'
 import { clamp } from '../utils/clamp'
 import { createLogger } from '../utils/logger'
 import { getAutostart, setAutostart } from './autostart'
@@ -475,6 +475,23 @@ function sanitizeSettingsPatch(raw: unknown): Partial<AppSettings> {
     if (Object.keys(next).length > 0) out.clipboard = next as AppSettings['clipboard']
   }
 
+  // 待办与便签：目前只有"打开面板的全局快捷键"一项，校验口径与剪贴板那处**逐字相同**。
+  // 数据本身（待办 / 便签正文）不走设置层，所以这里天然不会碰到业务内容。
+  const todo = input.todo as Record<string, unknown> | undefined
+  if (todo && typeof todo === 'object') {
+    const next: Partial<AppSettings['todo']> = {}
+    const hotkeyRaw = todo.hotkey
+    if (hotkeyRaw !== undefined && typeof hotkeyRaw === 'string') {
+      const text = hotkeyRaw.trim()
+      if (text === '') {
+        next.hotkey = ''
+      } else if (text.length <= 64 && validateHotkeyFormat(text).ok) {
+        next.hotkey = text
+      }
+    }
+    if (Object.keys(next).length > 0) out.todo = next as AppSettings['todo']
+  }
+
   return out
 }
 
@@ -494,10 +511,9 @@ function applySideEffects(settings: AppSettings): void {
   reminderScheduler.refresh()
   // 剪贴板：开关 / 黑名单 / 采图 / 存储目录 / 快捷键都可能变化
   refreshClipboardStorage()   // 切换目录就重建 store + watcher
-  setClipboardHotkey(
-    settings.clipboard.hotkey,
-    toggleClipboardPanel
-  )
+  setHotkey('clipboard', settings.clipboard.hotkey, toggleClipboardPanel)
+  // 待办面板的快捷键同样来自设置，改完要立刻生效（否则得重启才认新键）
+  setHotkey('todo', settings.todo.hotkey, toggleTodoPanel)
   refreshClipboardWatcher()   // 热更新由 store 重启触发
   refreshTray()
 }
@@ -684,13 +700,13 @@ export function registerIpc(): void {
 
   // 录制开始：主进程解绑旧值。begin/end 严格配对，渲染层在 unmount 时也要调 end(null) 兜底。
   ipcMain.handle(IPC.CLIPBOARD_BEGIN_RECORDING, () => {
-    suspendHotkeyForRecording()
+    suspendHotkeyForRecording('clipboard')
   })
 
   // 录制结束：传新值 → 注册；传 null → 恢复旧值。
   ipcMain.handle(IPC.CLIPBOARD_END_RECORDING, (_event: IpcMainInvokeEvent, raw: unknown) => {
     const next = typeof raw === 'string' ? raw : null
-    endHotkeyRecording(next)
+    endHotkeyRecording('clipboard', next)
   })
 
   // ---------- 待办与便签 ----------
@@ -699,6 +715,25 @@ export function registerIpc(): void {
   // 入参不合法时不抛错，回一份未改动的快照 —— 让 UI 的"没生效"是可见的，
   // 而不是一个被吞掉的异常。
   initTodo()
+  // 面板快捷键：与剪贴板同一时机注册（模块已就绪、设置可读）。
+  // 注册失败（键被别的软件占了）只 warn，不打断启动 —— 用户还能走托盘 / 右键菜单。
+  setHotkey('todo', getSettings().todo.hotkey, toggleTodoPanel)
+
+  // 快捷键三件套：与 `clipboard:*` 那三个逐字对称，只是作用在 todo 槽位上。
+  ipcMain.handle(IPC.TODO_TRY_HOTKEY, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const hotkey = asString(raw, 64)
+    if (hotkey === null) return { ok: false, reason: '快捷键不合法' }
+    return tryHotkey(hotkey)
+  })
+
+  ipcMain.handle(IPC.TODO_BEGIN_RECORDING, () => {
+    suspendHotkeyForRecording('todo')
+  })
+
+  ipcMain.handle(IPC.TODO_END_RECORDING, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const next = typeof raw === 'string' ? raw : null
+    endHotkeyRecording('todo', next)
+  })
 
   ipcMain.handle(IPC.TODO_SNAPSHOT, () => todoSnapshot())
 

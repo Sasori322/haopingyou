@@ -156,5 +156,13 @@ export interface PetApi {
     openPanel(focusQuickAdd?: boolean): void
     /** 面板窗口专用：主进程要求把光标落到快速录入框 */
     onFocusQuickAdd(cb: () => void): () => void
+    /**
+     * 打开面板的全局快捷键：试探 / 录制三件套。
+     * 语义与 `clipboard.tryHotkey / beginHotkeyRecording / endHotkeyRecording` 完全一致，
+     * 只是作用在待办面板这个槽位上（同名的三件套可以放心照抄）。
+     */
+    tryHotkey(hotkey: string): Promise<{ ok: boolean; reason?: string }>
+    beginHotkeyRecording(): Promise<void>
+    endHotkeyRecording(newHotkey: string | null): Promise<void>
   }
 }

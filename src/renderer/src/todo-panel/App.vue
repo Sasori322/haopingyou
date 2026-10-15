@@ -9,14 +9,32 @@
  *
  * 与设置页的分工：
  * - 这里的职责是"瞥一眼 + 勾掉 + 随手记一条"，所以只读未完成待办、只有最简单的增/删/完成；
- * - 编辑（优先级 / 标签 / 截止时间）、按完成归档、**便签挑颜色与改正文**，都在设置页那一页里做。
+ * - **记的时候**能顺手定两件事（2026-10-15 加）：待办点左侧那个圆点切优先级、便签点色点挑颜色。
+ *   这两项是"记下来那一刻心里就有数"的，让用户为它专门跑一趟设置页，代价不对等；
+ * - 但**改已经记下的条目**（改优先级 / 标签 / 截止时间、便签换色与改正文）仍然只在设置页 ——
+ *   面板是常驻窄窗，hover 时再长出一排控件就把它变成小设置页了。
+ *
+ * 底线是**不新增纵向控件行**：优先级挤进录入行左侧那 28px，色点是便签录入区第二行
+ * （便签页签的列表是两列卡片，纵向本来比待办宽裕），列表可视高度基本没变。
  *
  * 数据流：写操作返回最新快照（直接赋值），`onChanged` 只用来接住**另一个窗口**的改动
  * —— 设置页和这个面板经常同时开着，两边显示不一致是最容易被发现的那种"坏味道"。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NOTE_TEXT_MAX, TODO_TITLE_MAX } from '@shared/types/todo'
-import type { StickyNote, TodoItem, TodoSnapshot } from '@shared/types/todo'
+import {
+  NOTE_TEXT_MAX,
+  STICKY_COLORS,
+  TODO_PRIORITIES,
+  TODO_PRIORITY_LABEL,
+  TODO_TITLE_MAX
+} from '@shared/types/todo'
+import type {
+  StickyColor,
+  StickyNote,
+  TodoItem,
+  TodoPriority,
+  TodoSnapshot
+} from '@shared/types/todo'
 import { dueBucket, formatDueShort, formatOverdueSpan } from '@/common/todo-date'
 import { NOTE_SKIN } from '@/common/note-skin'
 
@@ -31,6 +49,12 @@ const snapshot = ref<TodoSnapshot | null>(null)
 const tab = ref<PanelTab>(readInitialTab())
 const quickTitle = ref('')
 const quickNote = ref('')
+/**
+ * 快速录入的两个"顺手选项"。**记完不重置**：连记三件同优先级的活儿、同色的一叠便签是常态，
+ * 每条都重新点一遍才是打扰。当前档位就摆在录入行上（圆点 / 色点），看得见、随时能改。
+ */
+const quickPriority = ref<TodoPriority>('normal')
+const quickNoteColor = ref<StickyColor>('yellow')
 const busy = ref(false)
 const noteBusy = ref(false)
 /** 每分钟刷新的"现在"：让"已过期 3 分钟"和分档（今天/过期）自己往前走 */
@@ -116,16 +140,28 @@ function focusActiveInput(): void {
   else noteInputRef.value?.focus()
 }
 
+/**
+ * 优先级圆点：点一下往下一档（普通 → 高 → 低 → 普通）。
+ *
+ * 顺序照着 `TODO_PRIORITIES` 走，所以"从默认的普通点第一下"落在**高**上 ——
+ * 绝大多数时候用户点它是想强调这条，而不是想把它降下去。
+ */
+function cyclePriority(): void {
+  const i = TODO_PRIORITIES.indexOf(quickPriority.value)
+  const next = TODO_PRIORITIES[(i + 1) % TODO_PRIORITIES.length]
+  if (next) quickPriority.value = next
+}
+
 async function addQuick(): Promise<void> {
   const title = quickTitle.value.trim()
   if (title.length === 0 || busy.value) return
   busy.value = true
   try {
-    // 快速录入只填标题：面板的输入框就这么宽，塞优先级/日期选择器会把它变成一个小表单。
-    // 需要那些字段时在设置页补 —— 这也是"随手记"与"认真记"的合理分工。
+    // 快速录入只填标题 + 一个优先级：面板的输入框就这么宽，再塞日期/标签就会变成小表单。
+    // 那些字段仍然在设置页补 —— 这是"随手记"与"认真记"的分工。
     snapshot.value = await window.petAPI.todo.add({
       title,
-      priority: 'normal',
+      priority: quickPriority.value,
       tags: [],
       dueAt: null
     })
@@ -142,9 +178,8 @@ async function addQuickNote(): Promise<void> {
   if (text.length === 0 || noteBusy.value) return
   noteBusy.value = true
   try {
-    // 颜色固定给黄色：这一格的职责是"先把话记住"，挑颜色属于设置页那种"认真管"。
-    // 想改颜色/改正文时，同一张便签在设置页点一下就能编辑。
-    snapshot.value = await window.petAPI.todo.addNote({ text, color: 'yellow' })
+    // 记的时候就能挑颜色（默认黄）。改已有便签的颜色 / 正文仍然在设置页。
+    snapshot.value = await window.petAPI.todo.addNote({ text, color: quickNoteColor.value })
     quickNote.value = ''
   } finally {
     noteBusy.value = false
@@ -245,6 +280,17 @@ onBeforeUnmount(() => {
     <!-- ---------------- 待办 ---------------- -->
     <template v-if="tab === 'todo'">
       <div class="todo-quick">
+        <!-- 优先级圆点。`@mousedown.prevent` 是必需的：不拦的话按下去光标就从输入框跑了，
+             用户点完圆点想接着打字还得再点一次输入框。 -->
+        <button
+          class="quick-priority"
+          :class="`quick-priority--${quickPriority}`"
+          :title="`优先级：${TODO_PRIORITY_LABEL[quickPriority]}（点击切换 低 → 普通 → 高）`"
+          @mousedown.prevent
+          @click="cyclePriority"
+        >
+          <span class="quick-priority__dot"></span>
+        </button>
         <input
           ref="inputRef"
           v-model="quickTitle"
@@ -285,23 +331,40 @@ onBeforeUnmount(() => {
 
     <!-- ---------------- 便签 ---------------- -->
     <template v-else>
-      <div class="todo-quick">
-        <input
-          ref="noteInputRef"
-          v-model="quickNote"
-          class="todo-quick__input"
-          type="text"
-          :maxlength="NOTE_TEXT_MAX"
-          placeholder="记一条便签，回车添加"
-          @keydown.enter.prevent="addQuickNote"
-        />
-        <button
-          class="todo-btn todo-btn--primary"
-          :disabled="noteBusy || quickNote.trim().length === 0"
-          @click="addQuickNote"
-        >
-          添加
-        </button>
+      <div class="todo-quick todo-quick--stacked">
+        <div class="todo-quick__row">
+          <input
+            ref="noteInputRef"
+            v-model="quickNote"
+            class="todo-quick__input"
+            type="text"
+            :maxlength="NOTE_TEXT_MAX"
+            placeholder="记一条便签，回车添加"
+            @keydown.enter.prevent="addQuickNote"
+          />
+          <button
+            class="todo-btn todo-btn--primary"
+            :disabled="noteBusy || quickNote.trim().length === 0"
+            @click="addQuickNote"
+          >
+            添加
+          </button>
+        </div>
+        <!-- 挑颜色放在录入区第二行：便签页签的列表是两列卡片，纵向比待办页签宽裕，
+             挤进第一行会把输入框压到只剩八个字宽，不值得。 -->
+        <div class="note-colors">
+          <span class="note-colors__label">颜色</span>
+          <button
+            v-for="c in STICKY_COLORS"
+            :key="c"
+            class="note-color"
+            :class="{ 'note-color--on': quickNoteColor === c }"
+            :style="{ background: NOTE_SKIN[c].border }"
+            :title="`便签颜色：${NOTE_SKIN[c].label}`"
+            @mousedown.prevent
+            @click="quickNoteColor = c"
+          ></button>
+        </div>
       </div>
 
       <div class="todo-list">
@@ -319,8 +382,13 @@ onBeforeUnmount(() => {
             <span v-if="note.pinned" class="note-card__pin">置顶</span>
             <div class="note-card__text">{{ note.text }}</div>
             <div class="note-card__ops">
-              <button class="note-card__op" :title="note.pinned ? '取消置顶' : '置顶'" @click="togglePin(note)">
-                {{ note.pinned ? '取消置顶' : '置顶' }}
+              <button
+                class="note-card__op"
+                :class="{ 'note-card__op--on': note.pinned }"
+                :title="note.pinned ? '取消置顶' : '置顶'"
+                @click="togglePin(note)"
+              >
+                {{ note.pinned ? '★' : '☆' }}
               </button>
               <button class="note-card__op note-card__op--del" title="删除" @click="removeNote(note)">✕</button>
             </div>

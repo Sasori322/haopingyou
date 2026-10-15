@@ -6,7 +6,7 @@ import { IPC } from '../../shared/ipc'
 import type { ClipboardStatus } from '../../shared/types/clipboard'
 import { getSettings } from '../services/settingsService'
 import { createLogger } from '../utils/logger'
-import { setClipboardHotkey } from './clipboardHotkey'
+import { setHotkey } from '../services/globalHotkeys'
 import { ClipboardStore } from './clipboardStore'
 import { ClipboardWatcher } from './clipboardWatcher'
 import { toggleClipboardPanel } from '../windows/clipboardWindow'
@@ -95,8 +95,8 @@ export function initClipboard(): void {
   registerProtocolHandler()
   recreateStore()
   recreateWatcher()
-  // 快捷键：用设置里的值；如果注册失败由 setClipboardHotkey 内部 warn，不打断启动
-  setClipboardHotkey(getSettings().clipboard.hotkey, toggleClipboardPanel)
+  // 快捷键：用设置里的值；如果注册失败由 setHotkey 内部 warn，不打断启动
+  setHotkey('clipboard', getSettings().clipboard.hotkey, toggleClipboardPanel)
   // recreateWatcher 已经按 enabled 决定是否启动，这里不再重复 start
   log.info('剪贴板历史已就绪 存储', store!.meta().path)
 }

@@ -22,6 +22,10 @@ import {
 import type { StickyColor, StickyNote, TodoItem, TodoPriority, TodoSnapshot } from '@shared/types/todo'
 import { formatDateTime, formatDueShort, formatOverdueSpan } from '@/common/todo-date'
 import { NOTE_SKIN } from '@/common/note-skin'
+import { useSettings } from '../composables/useSettings'
+import HotkeyRecorder from '../components/HotkeyRecorder.vue'
+
+const { settings, patch } = useSettings()
 
 const snapshot = ref<TodoSnapshot | null>(null)
 /** 每 30 秒走一次的"现在"：让"已过期 3 分钟"和 今天/明天 的分档自己往前走，不用刷新页面 */
@@ -162,6 +166,18 @@ function openPanel(): void {
   window.petAPI.todo.openPanel(false)
 }
 
+/**
+ * 面板的全局快捷键。
+ * 录制控件与剪贴板设置页是同一个组件（`components/HotkeyRecorder.vue`），
+ * 这里只把「设置里的值」和「改完写回设置」接上。
+ */
+const todoApi = window.petAPI.todo
+const todoHotkey = computed(() => settings.value?.todo?.hotkey ?? '')
+
+function onHotkeyChange(value: string): void {
+  void patch({ todo: { hotkey: value } })
+}
+
 // ---------------- 编辑弹框 ----------------
 
 const editVisible = ref(false)
@@ -300,6 +316,14 @@ onBeforeUnmount(() => {
         </el-button>
       </div>
     </div>
+
+    <HotkeyRecorder
+      label="唤起面板的全局快捷键"
+      :model-value="todoHotkey"
+      :api="todoApi"
+      placeholder="CommandOrControl+Alt+T"
+      @change="onHotkeyChange"
+    />
   </el-card>
 
   <el-card class="section-card" shadow="never">

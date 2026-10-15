@@ -21,7 +21,26 @@ let pendingFocusQuickAdd = false
  * 常驻旁挂的东西带一条 Windows 标题栏太占地方，也不像"挂着的一张纸"。
  * 拖动靠 CSS 的 `-webkit-app-region: drag`（见面板样式里的 header），
  * 关闭按钮在面板自己头上，所以不会出现"没有标题栏就关不掉"。
+ *
+ * ## 为什么需要 `transparent`（2026-10-15 加）
+ * 圆角。无边框窗口在 Windows 上通体是一块**直角**矩形，`border-radius` 只作用于
+ * 渲染内容，四角照旧是窗口底色 —— 看上去还是方的。想让"椭圆角"真的成立，
+ * 窗口自己必须透明，圆角由 CSS 画、四角由系统露出桌面。
+ * 代价有两条，都是可接受的：
+ *  1. 窗口矩形外的 `PANEL_PAD` 边距（用来放投影）是**透明但仍会命中鼠标**的 ——
+ *     不过那块本来就是窗口的 resize 热区，用户在那儿按下本来就是"拖边框"，不违和；
+ *  2. 透明窗口拿不到系统投影，浮起感只能靠 CSS `box-shadow` 补，所以要留边距。
+ * `PANEL_PAD` 就是为此存在的：窗口 = 内容 + 一圈透明边距。
  */
+
+/**
+ * 内容区尺寸（DIP）。面板的默认大小，也是 `minWidth/minHeight` 的基准。
+ * 单独抽出来是因为初始位置计算也要用 —— 写死两处必然漂移。
+ */
+const PANEL_W = 320
+const PANEL_H = 500
+/** 给投影留的透明边距，四边各一份（渲染层的 `.todo-root` 用 `inset` 对齐） */
+const PANEL_PAD = 8
 export function openTodoPanel(options?: {
   focusQuickAdd?: boolean
   /**
@@ -46,17 +65,21 @@ export function openTodoPanel(options?: {
   }
 
   const win = new BrowserWindow({
-    width: 320,
-    height: 500,
-    minWidth: 264,
-    minHeight: 340,
+    // 窗口尺寸 = 内容 + 两侧透明边距，见 PANEL_PAD 的注释
+    width: PANEL_W + PANEL_PAD * 2,
+    height: PANEL_H + PANEL_PAD * 2,
+    minWidth: 264 + PANEL_PAD * 2,
+    minHeight: 340 + PANEL_PAD * 2,
     show: false,
     frame: false,
     resizable: true,
     alwaysOnTop: true,
     maximizable: false,
     title: '待办与便签',
-    backgroundColor: '#ffffff',
+    // 透明窗口 + CSS 圆角：透明窗口的底色必须带 alpha，写 `#ffffff` 会把四角填成白色，
+    // 圆角就白做了（`transparent` 与不透明背景色同时给，Windows 上以后者为准）。
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -71,8 +94,8 @@ export function openTodoPanel(options?: {
   // 位置刻意不持久化（与宠物位置同一口径：这个项目里位置都不是配置项）。
   try {
     const { workArea } = screen.getPrimaryDisplay()
-    const x = Math.max(workArea.x, workArea.x + workArea.width - 320 - 16)
-    const y = workArea.y + Math.max(0, Math.round((workArea.height - 500) / 2))
+    const x = Math.max(workArea.x, workArea.x + workArea.width - (PANEL_W + PANEL_PAD * 2) - 16)
+    const y = workArea.y + Math.max(0, Math.round((workArea.height - (PANEL_H + PANEL_PAD * 2)) / 2))
     win.setPosition(x, y)
   } catch (error) {
     log.warn('计算面板初始位置失败，使用默认位置', error)

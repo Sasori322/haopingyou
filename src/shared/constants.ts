@@ -209,5 +209,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     excludeKeywords: ['password', 'passwd', '身份证', '银行卡'],
     storageDir: null,
     hotkey: 'CommandOrControl+Shift+V'
+  },
+  // 待办便签面板的默认快捷键。
+  // 为什么不用 Ctrl+Shift+T：那个组合在浏览器里是「恢复刚关掉的标签页」，全局注册会把它
+  // 从**所有**应用手里抢走，用户只会以"浏览器坏了"的形式感知到。Alt 组合在 Windows 上
+  // 几乎没有系统级占用，代价小得多；用户随时可以在设置里改掉或清空。
+  todo: {
+    hotkey: 'CommandOrControl+Alt+T'
   }
 }

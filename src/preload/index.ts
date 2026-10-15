@@ -103,7 +103,12 @@ const api: PetApi = {
     onChanged: (cb) => subscribe<TodoSnapshot>(IPC.TODO_CHANGED, cb),
     openPanel: (focusQuickAdd = false) =>
       ipcRenderer.send(IPC.TODO_OPEN_PANEL, { focusQuickAdd }),
-    onFocusQuickAdd: (cb) => subscribe<void>(IPC.TODO_PANEL_FOCUS_QUICK_ADD, () => cb())
+    onFocusQuickAdd: (cb) => subscribe<void>(IPC.TODO_PANEL_FOCUS_QUICK_ADD, () => cb()),
+    // 与 clipboard 那三个同名同形，只是走 todo 槽位
+    tryHotkey: (hotkey: string) => ipcRenderer.invoke(IPC.TODO_TRY_HOTKEY, hotkey),
+    beginHotkeyRecording: () => ipcRenderer.invoke(IPC.TODO_BEGIN_RECORDING),
+    endHotkeyRecording: (newHotkey: string | null) =>
+      ipcRenderer.invoke(IPC.TODO_END_RECORDING, newHotkey)
   }
 }
 

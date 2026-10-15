@@ -121,6 +121,15 @@ export const IPC = {
 
   // ---- 待办与便签 ----
   /**
+   * 面板窗口全局快捷键的三个通道，语义与上面 `clipboard:*` 那三个**逐字相同**——
+   * 只是作用在"待办便签面板"这个槽位上（主进程侧由 `globalHotkeys` 按槽位分账）。
+   * 之所以不合并成一个带 slot 参数的通用通道：参数一多，IPC 校验层就要额外分辨
+   * "slot 不认识"这类错误，而两个槽位各自三个通道的成本只是多六行常量。
+   */
+  TODO_TRY_HOTKEY: 'todo:try-hotkey',
+  TODO_BEGIN_RECORDING: 'todo:begin-recording',
+  TODO_END_RECORDING: 'todo:end-recording',
+  /**
    * 取全量快照（todos + notes + stats）。
    * 写操作也一律返回同一份快照，渲染层不必"改完再读一次"。
    */

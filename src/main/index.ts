@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs'
 import { APP_ID } from '../shared/constants'
 import type { PetState } from '../shared/types/pet'
 import { registerClipboardSchemes, flushClipboard } from './clipboard'
-import { unregisterClipboardHotkey } from './clipboard/clipboardHotkey'
+import { unregisterAllHotkeys } from './services/globalHotkeys'
 import { petApp } from './pet/petApp'
 import { builtinPetsRoot, getPet, userPetsRoot } from './pet/petLibrary'
 import { handlePetAssetProtocol, registerPetAssetScheme } from './services/assetProtocol'
@@ -71,7 +71,7 @@ function start(): void {
     // 关掉剪贴板面板（如果还在开），flush 落盘，停 watcher，解绑热键
     closeClipboardPanel()
     flushClipboardSafe()
-    unregisterClipboardHotkey()
+    unregisterAllHotkeys()
     // 待办：截止提醒先停（免得退出过程中又投一次），再关面板、同步落盘
     todoReminder.stop()
     closeTodoPanel()
@@ -410,9 +410,13 @@ function maybeCaptureSettingsWindow(): void {
  * 只能看真实渲染；而它的入口是托盘菜单 + 宠物右键，手工路径很长。
  * 与 `HPY_CAPTURE_SETTINGS` 对称。
  *
- * 两个附加参数：
+ * 三个附加参数：
  * - `HPY_CAPTURE_TODO_PANEL_FOCUS=1`：把光标落到快速录入框；
- * - `HPY_CAPTURE_TODO_PANEL_TAB=notes`：直开便签页签（面板有两个页签，一张截图只能证实一个）。
+ * - `HPY_CAPTURE_TODO_PANEL_TAB=notes`：直开便签页签（面板有两个页签，一张截图只能证实一个）；
+ * - `HPY_CAPTURE_TODO_PANEL_EVAL=<js>`：在诊断脚本跑完之后、截图之前，再执行一段渲染层脚本
+ *   （返回值同样打进日志）。**它会真的改数据**，所以配套用 `.tmp/seed-notes.mjs seed|restore`
+ *   兜住用户数据。有了它，面板才有"渲染层 → IPC → 落盘 → 回快照"的端到端证据，
+ *   否则这类改动只能靠肉眼看截图 —— 而截图看不出"点圆点后优先级是不是真的变了"。
  *
  * 诊断脚本会**依次点过两个页签**再还原，所以一次运行就能同时证实"页签能切""两个列表各自渲染出
  * 多少条"，截图拍的仍是进来时那个页签的原始状态。
@@ -420,6 +424,7 @@ function maybeCaptureSettingsWindow(): void {
 function maybeCaptureTodoPanel(): void {
   const target = process.env['HPY_CAPTURE_TODO_PANEL']
   if (!target) return
+  const evalScript = process.env['HPY_CAPTURE_TODO_PANEL_EVAL']
   const win = openTodoPanel({
     focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1',
     initialTab: process.env['HPY_CAPTURE_TODO_PANEL_TAB'] === 'notes' ? 'notes' : undefined
@@ -473,6 +478,14 @@ function maybeCaptureTodoPanel(): void {
         )
         .then(async (info: unknown) => {
           log.info('[截图] 待办面板', JSON.stringify(info))
+          if (evalScript) {
+            try {
+              const extra = await win.webContents.executeJavaScript(evalScript, true)
+              log.info('[截图] 待办面板 EVAL', JSON.stringify(extra))
+            } catch (error: unknown) {
+              log.warn('[截图] 待办面板 EVAL 抛错', error)
+            }
+          }
           const image = await win.webContents.capturePage()
           writeFileSync(target, image.toPNG())
           log.info(`[截图] 已写入 ${target}`)
