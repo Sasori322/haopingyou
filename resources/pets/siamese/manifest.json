@@ -8,7 +8,7 @@
   "canvas": { "w": 200, "h": 260 },
   "scale": 1,
   "anchor": { "x": 0.5, "y": 1 },
-  "hitbox": { "x": 40, "y": 81, "w": 120.5, "h": 179 },
+  "hitbox": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 },
   "defaultAnimation": "idle",
   "animations": {
     "idle": {
@@ -18,7 +18,7 @@
       "fps": 6,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     },
     "walk": {
       "mode": "sheet",
@@ -27,7 +27,7 @@
       "fps": 8,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 14, "y": 89.5, "w": 172, "h": 170.5 }
+      "bounds": { "x": 12.5, "y": 87.5, "w": 175, "h": 172.5 }
     },
     "sleep": {
       "mode": "sheet",
@@ -36,7 +36,7 @@
       "fps": 3,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 42, "y": 157, "w": 116.5, "h": 103 }
+      "bounds": { "x": 8.5, "y": 110.5, "w": 183, "h": 149.5 }
     },
     "click": {
       "mode": "sheet",
@@ -46,7 +46,7 @@
       "loop": false,
       "interruptible": false,
       "next": "idle",
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     },
     "drag": {
       "mode": "sheet",
@@ -55,7 +55,7 @@
       "fps": 8,
       "loop": true,
       "interruptible": false,
-      "bounds": { "x": 49.5, "y": 8.5, "w": 101.5, "h": 251.5 }
+      "bounds": { "x": 45, "y": 9, "w": 110, "h": 251 }
     },
     "eat": {
       "mode": "sheet",
@@ -65,7 +65,7 @@
       "loop": false,
       "interruptible": false,
       "next": "idle",
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     },
     "rest": {
       "mode": "sheet",
@@ -74,7 +74,7 @@
       "fps": 7,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     },
     "hot": {
       "mode": "sheet",
@@ -83,7 +83,7 @@
       "fps": 9,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     },
     "focus": {
       "mode": "sheet",
@@ -92,7 +92,7 @@
       "fps": 5,
       "loop": true,
       "interruptible": true,
-      "bounds": { "x": 40, "y": 81, "w": 120.5, "h": 179 }
+      "bounds": { "x": 37, "y": 80.5, "w": 126, "h": 179.5 }
     }
   },
   "bubbles": {
