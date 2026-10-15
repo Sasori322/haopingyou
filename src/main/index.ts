@@ -212,11 +212,15 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
         log.info(`[截图] 让宠物说：${line} → ${petApp.speak('debug', line)}`)
       }
       const diagnostic = `(async () => {
+        // 气泡有 0.18s 入场动画（scale 0.9 → 1），量得太早 getBoundingClientRect 会偏小，
+        // 所以先等它落定再诊断、再截图 —— 否则「高度是否随缩放变化」这个判据不成立。
+        await new Promise((r) => setTimeout(r, 320))
         const hit = document.querySelector('.pet-hit')
         const cv = document.querySelector('canvas.pet-sheet')
         const fb = document.querySelector('.pet-fallback')
         const gazeEl = document.querySelector('.pet-gaze')
         const bubbleEl = document.querySelector('.bubble')
+        const stageEl = document.querySelector('.pet-stage')
         let painted = 'n/a'
         if (cv) {
           try {
@@ -253,6 +257,12 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
           canvasOpaquePixels: painted,
           fallback: !!fb,
           bubble: bubbleEl ? bubbleEl.textContent : null,
+          // 气泡版式的量化证据：字号与像素高度在不同 petScale 下必须**完全一致**
+          bubbleRect: bubbleEl ? (() => { const r = bubbleEl.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] })() : null,
+          bubbleFont: bubbleEl ? getComputedStyle(bubbleEl).fontSize : null,
+          // 气泡若落在被缩放的 stage 里就说明「字跟着宠物缩」的毛病回来了
+          bubbleInsideScaledStage: bubbleEl ? !!bubbleEl.closest('.pet-stage') : null,
+          stageScale: stageEl ? getComputedStyle(stageEl).transform : 'MISSING',
           gazeWrap: gazeEl ? gazeEl.style.transform : 'MISSING',
           sheetTransform: cv ? cv.style.transform : 'MISSING',
           imageProbe,
@@ -399,12 +409,20 @@ function maybeCaptureSettingsWindow(): void {
  * 面板是**无边框 + 置顶**的独立窗口，版式问题（拖动区压住按钮、窄宽度下文字折行）
  * 只能看真实渲染；而它的入口是托盘菜单 + 宠物右键，手工路径很长。
  * 与 `HPY_CAPTURE_SETTINGS` 对称。
+ *
+ * 两个附加参数：
+ * - `HPY_CAPTURE_TODO_PANEL_FOCUS=1`：把光标落到快速录入框；
+ * - `HPY_CAPTURE_TODO_PANEL_TAB=notes`：直开便签页签（面板有两个页签，一张截图只能证实一个）。
+ *
+ * 诊断脚本会**依次点过两个页签**再还原，所以一次运行就能同时证实"页签能切""两个列表各自渲染出
+ * 多少条"，截图拍的仍是进来时那个页签的原始状态。
  */
 function maybeCaptureTodoPanel(): void {
   const target = process.env['HPY_CAPTURE_TODO_PANEL']
   if (!target) return
   const win = openTodoPanel({
-    focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1'
+    focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1',
+    initialTab: process.env['HPY_CAPTURE_TODO_PANEL_TAB'] === 'notes' ? 'notes' : undefined
   })
   win.webContents.on('console-message', (event) => {
     log.info(`[todoPanel:${event.level}] ${event.message}`)
@@ -413,9 +431,44 @@ function maybeCaptureTodoPanel(): void {
     setTimeout(() => {
       void win.webContents
         .executeJavaScript(
-          `({ rows: document.querySelectorAll('.todo-row').length,
-              title: (document.querySelector('.todo-header__title') || {}).textContent || '',
-              active: document.activeElement ? document.activeElement.className : '' })`,
+          `(async () => {
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+            const tabText = () => {
+              const el = document.querySelector('.todo-tab--active')
+              return el ? el.textContent.replace(/\\s+/g, ' ').trim() : ''
+            }
+            const btn = (kw) =>
+              Array.from(document.querySelectorAll('.todo-tab')).find((b) => b.textContent.includes(kw))
+            const notesBtn = btn('便签')
+            const todoBtn = btn('待办')
+            const tabAtEntry = tabText()
+            if (notesBtn) notesBtn.click()
+            await wait(80)
+            const notesTab = tabText()
+            const cards = document.querySelectorAll('.note-card').length
+            const pinned = document.querySelectorAll('.note-card__pin').length
+            const noteFooter = (document.querySelector('.todo-footer') || {}).textContent || ''
+            if (todoBtn) todoBtn.click()
+            await wait(80)
+            const todoTab = tabText()
+            const rows = document.querySelectorAll('.todo-row').length
+            const todoFooter = (document.querySelector('.todo-footer') || {}).textContent || ''
+            if (tabAtEntry.includes('待办') && todoBtn) todoBtn.click()
+            else if (tabAtEntry.includes('便签') && notesBtn) notesBtn.click()
+            await wait(80)
+            return {
+              tabAtEntry: tabAtEntry,
+              tabAfterClickNotes: notesTab,
+              tabAfterClickTodo: todoTab,
+              tabAfterRestore: tabText(),
+              cards: cards,
+              pinned: pinned,
+              noteFooter: noteFooter.trim(),
+              rows: rows,
+              todoFooter: todoFooter.trim(),
+              active: document.activeElement ? document.activeElement.className : ''
+            }
+          })()`,
           true
         )
         .then(async (info: unknown) => {

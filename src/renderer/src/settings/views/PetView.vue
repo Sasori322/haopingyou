@@ -111,10 +111,10 @@ const statusText = computed(() => {
   if (neither) return '还没有可用条件：填一个进程名，或打开「全屏检测」'
   if (immersive.value.autoDetect && !current.probeAvailable) {
     return current.probeRunning
-      ? '辅助进程刚启动，正在自检…'
-      : '全屏检测当前不可用（系统可能限制了 PowerShell），仍可用「让宠物躲开」手动让路'
+      ? '正在启动检测，请稍候…'
+      : '全屏检测当前不可用，可在托盘或右键菜单里手动让宠物躲开'
   }
-  if (immersive.value.autoDetect) return '检测中，辅助进程运行正常'
+  if (immersive.value.autoDetect) return '检测中'
   return '按进程名单检测中'
 })
 
@@ -136,11 +136,10 @@ onBeforeUnmount(() => {
   <h2 class="page-title">宠物</h2>
   <p class="page-desc">
     点卡片切换宠物；点名字旁的 ✎ 可以改个叫法，系统通知与托盘提示会一起跟着变（留空恢复默认）。
-    宠物由 <code>resources/pets/&lt;id&gt;/manifest.json</code> 驱动，素材缺失时渲染层回退为内置占位形象。
   </p>
 
   <el-card class="section-card" shadow="never" v-loading="loading">
-    <el-empty v-if="!loading && pets.length === 0" description="还没有可用的宠物，请在 resources/pets 下放入宠物目录" />
+    <el-empty v-if="!loading && pets.length === 0" description="还没有可用的宠物" />
     <div v-else class="pet-grid">
       <div
         v-for="pet in pets"
@@ -159,9 +158,7 @@ onBeforeUnmount(() => {
           </el-tag>
           <button class="pet-card__rename" title="改个名字" @click.stop="rename(pet)">✎</button>
         </div>
-        <div v-if="!pet.hasAssets" class="pet-card__status" title="素材缺失，桌面上将以内置占位形象显示">
-          素材待补充
-        </div>
+        <div v-if="!pet.hasAssets" class="pet-card__status">形象完善中</div>
       </div>
     </div>
     <template #footer>
@@ -173,9 +170,7 @@ onBeforeUnmount(() => {
     <div class="setting-row">
       <div>
         <div class="setting-row__label">跟着光标偏一下</div>
-        <div class="setting-row__hint">
-          光标靠近时宠物会朝它轻轻偏过去（最多 3.2px / 1.2°），走远了就自己站正
-        </div>
+        <div class="setting-row__hint">光标靠近时宠物会朝它轻轻偏过去，走远了就自己站正</div>
       </div>
       <el-switch v-model="gazeEnabled" />
     </div>
@@ -213,10 +208,7 @@ onBeforeUnmount(() => {
     <div class="setting-row">
       <div>
         <div class="setting-row__label">全屏检测</div>
-        <div class="setting-row__hint">
-          前台窗口铺满整屏时让路。Electron 拿不到别的应用的前台窗口，这里用一个常驻 PowerShell
-          辅助进程读取（不引原生模块、不编译 .NET，实测每次查询 1–2ms）
-        </div>
+        <div class="setting-row__hint">前台窗口铺满整屏时让宠物让路</div>
       </div>
       <el-switch v-model="immersiveAutoDetect" :disabled="!immersiveEnabled" />
     </div>
@@ -224,7 +216,7 @@ onBeforeUnmount(() => {
       <div>
         <div class="setting-row__label">进程名单</div>
         <div class="setting-row__hint">
-          这些程序一运行就让路。填 exe 名即可（可省略 .exe），支持 * 通配，例如 game* 、steam ，最多 8 个
+          这些程序运行时宠物让路。填 exe 名即可（可省略 .exe），支持 * 通配，例如 game*，最多 8 个
         </div>
       </div>
       <el-select
@@ -245,14 +237,6 @@ onBeforeUnmount(() => {
         <div class="setting-row__hint">{{ statusText }}</div>
       </div>
       <el-button text @click="refreshStatus">刷新</el-button>
-    </div>
-    <div class="setting-row">
-      <div>
-        <div class="setting-row__label">临时让它回来</div>
-        <div class="setting-row__hint">
-          也可以随时在托盘图标或宠物右键菜单里选「让宠物躲开」——手动让路不依赖上面这些检测
-        </div>
-      </div>
     </div>
   </el-card>
 </template>

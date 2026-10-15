@@ -80,7 +80,7 @@ async function pickAndApplyDir(): Promise<void> {
   // 这种"看起来成功"但实际没改的反馈，比沉默好得多——主进程的 log 里也有对应 warn。
   await patch({ clipboard: { storageDir: target } })
   if (settings.value?.clipboard?.storageDir !== target) {
-    ElMessage.error(`目录未被主进程接受：${target}`)
+    ElMessage.error(`这个目录没能保存成功：${target}`)
     return
   }
   await refreshStatus()
@@ -360,8 +360,7 @@ function openPanel(): void {
 <template>
   <h2 class="page-title">剪贴板历史</h2>
   <p class="page-desc">
-    应用在后台轮询系统剪贴板，只把变化的部分写进存储目录。
-    <strong>默认不采集图片</strong>——图片最容易误收隐私内容，需要时手动打开。
+    历史保存在本机。<strong>默认不记录图片</strong>——图片最容易误收隐私内容，需要时手动打开。
   </p>
 
   <el-card class="section-card" shadow="never">
@@ -369,8 +368,7 @@ function openPanel(): void {
       <div>
         <div class="setting-row__label">启用剪贴板历史</div>
         <div class="setting-row__hint">
-          关闭后 watcher 会停掉、新内容不再入队，但已有列表与图片保留在磁盘上。
-          删除或彻底清空走"清空"。
+          关闭后不再记录新内容，已有的历史会保留。
         </div>
       </div>
       <el-switch v-model="enabled" />
@@ -378,9 +376,9 @@ function openPanel(): void {
 
     <div class="setting-row">
       <div>
-        <div class="setting-row__label">同时采集图片</div>
+        <div class="setting-row__label">同时记录图片</div>
         <div class="setting-row__hint">
-          截图、复制图片都会被捕获。图片二进制落到独立的 <code>img/</code> 目录（不污染 <code>settings.json</code>）。
+          截图、复制图片都会被记录下来。
         </div>
       </div>
       <el-switch v-model="listenImages" :disabled="!enabled" />
@@ -392,8 +390,7 @@ function openPanel(): void {
       <div>
         <div class="setting-row__label">关键字黑名单</div>
         <div class="setting-row__hint">
-          命中即丢，逗号或换行分隔。<strong>别指望它能挡住密码</strong> —— 我们在主进程没办法识别
-          剪贴板的真正来源。要绝对安全请"暂停采集"。
+          命中即丢，逗号或换行分隔。<strong>无法保证挡住密码</strong>，敏感场合建议直接暂停记录。
         </div>
       </div>
       <el-input
@@ -413,8 +410,7 @@ function openPanel(): void {
         <div class="setting-row__label">存储目录</div>
         <div class="setting-row__hint">
           当前正在写入：<code class="path-display">{{ activeStorageDir }}</code>。<br>
-          切目录后<strong>原目录的数据保留在原地</strong>（不会自动迁移），新目录接续采集；
-          需要迁移请手动把 <code>clipboard.json</code> 与 <code>img/</code> 拷过去。
+          切换目录后<strong>原目录的历史保留在原地</strong>，不会自动迁移；需要的话请手动拷贝过去。
         </div>
       </div>
       <div style="display: flex; gap: 8px; flex-direction: column; align-items: flex-end">
@@ -431,9 +427,8 @@ function openPanel(): void {
         <div class="setting-row__hint">
           <span v-if="recording">正在录制：按键组合（Esc 取消）</span>
           <span v-else>
-            点 <strong>录制…</strong>，再按你想用的组合（必须含修饰键）；<br />
-            也可以直接按 Electron Accelerator 格式手写（<code>CommandOrControl+Shift+V</code>）。
-            留空 = 禁用全局快捷键，仅走托盘入口。<br />
+            点 <strong>录制…</strong>，再按你想用的组合（必须含 Ctrl / Alt / Shift 等修饰键）。<br />
+            留空 = 不使用全局快捷键，改为从托盘打开面板。<br />
           </span>
           <span v-if="hotkeyCheck?.ok && !recording" class="hint-ok">✓ 可用：{{ hotkeyCheck.reason ?? 'ok' }}</span>
           <span v-else-if="hotkeyCheck && !hotkeyCheck.ok && !recording" class="hint-err">
@@ -470,16 +465,16 @@ function openPanel(): void {
   <el-card class="section-card" shadow="never">
     <div class="setting-row">
       <div>
-        <div class="setting-row__label">采集状态</div>
+        <div class="setting-row__label">记录状态</div>
         <div class="setting-row__hint">
-          暂停不影响已有列表；暂停期间录入也只是"暂停"。
-          <span v-if="pausedRemain">· 已暂停约 {{ pausedRemain }} 后自动恢复</span>
+          暂停期间不会记录新内容，已有历史不受影响。
+          <span v-if="pausedRemain">· 已暂停，约 {{ pausedRemain }} 后自动恢复</span>
         </div>
       </div>
       <div style="display: flex; gap: 8px">
         <el-button :disabled="!enabled || !!pausedRemain" @click="pause(5)">暂停 5 分钟</el-button>
         <el-button :disabled="!enabled || !!pausedRemain" @click="pause(30)">暂停 30 分钟</el-button>
-        <el-button :disabled="!pausedRemain" @click="pause(null)">恢复采集</el-button>
+        <el-button :disabled="!pausedRemain" @click="pause(null)">恢复记录</el-button>
         <el-button type="danger" plain @click="clearAll">清空全部</el-button>
       </div>
     </div>
@@ -488,7 +483,7 @@ function openPanel(): void {
       <div>
         <div class="setting-row__label">查看 / 使用历史</div>
         <div class="setting-row__hint">
-          独立窗口打开（不在设置页内打开，避免设置页撑大），快捷键见上节。
+          在独立窗口中查看与取用。
         </div>
       </div>
       <el-button @click="openPanel">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   ForceStatePayload,
   GazePayload,
@@ -19,6 +19,15 @@ import { usePointerBridge } from './core/usePointerBridge'
 /** 素材缺失时的兜底画布与命中框（DIP，画布坐标系），对齐小猫站立姿态 */
 const FALLBACK_CANVAS = { w: 200, h: 260 }
 const FALLBACK_BOUNDS: HitRect = { x: 31.5, y: 78, w: 137.5, h: 182 }
+
+/** 气泡尾尖与宠物头顶之间的间距（DIP，固定值，不随 petScale 变） */
+const BUBBLE_GAP = 8
+/**
+ * 气泡至少离窗口顶边这么远。
+ * 宠物被拎起来（`drag` 姿态最高，画布上几乎顶到天）时头顶上方没多少地方，
+ * 这时**宁可与宠物重叠**也不能被窗口裁掉半行字——那正是「看不到了」的那种坏法。
+ */
+const BUBBLE_MIN_TOP = 2
 
 const state = ref<PetState>('idle')
 /** 主进程驱动的「基底状态」，点击这类短效果播完后回落到它 */
@@ -84,6 +93,14 @@ const gazeStyle = computed(() => {
 })
 
 /**
+ * 当前姿态的内容包络（DIP，画布坐标系）。
+ * 命中判定与气泡锚点都吃它——**两处必须同一口径**，否则气泡会飘在宠物头顶之外。
+ */
+const currentBounds = computed<HitRect>(
+  () => (useSheet.value ? manifest.value?.animations[state.value]?.bounds : null) ?? FALLBACK_BOUNDS
+)
+
+/**
  * 命中框：把当前动画的内容包络从「画布坐标」换算到「窗口坐标」。
  *
  * 画布在窗口内水平居中、底边对齐；再叠加三件事——
@@ -92,8 +109,7 @@ const gazeStyle = computed(() => {
  *  鼠标跟随的位移（倾角不建模：1.2° 在 182px 高的素材顶端约偏 3.8px，被 hitTest 的 8px pad 吸收）。
  */
 const hitRect = computed<HitRect>(() => {
-  const bounds =
-    (useSheet.value ? manifest.value?.animations[state.value]?.bounds : null) ?? FALLBACK_BOUNDS
+  const bounds = currentBounds.value
   const c = canvas.value
   const { w: winW, h: winH } = winSize.value
   const s = petScale.value
@@ -126,6 +142,37 @@ const hitBoxStyle = computed(() => ({
   width: `${canvas.value.w}px`,
   height: `${canvas.value.h}px`
 }))
+
+/**
+ * 宠物**当前姿态**内容包络的顶边（窗口坐标，含 petScale，不含鼠标跟随位移）。
+ *
+ * 气泡靠它贴着头顶走。必须跟着 petScale 一起换算：宠物调小之后头顶会明显下移，
+ * 若气泡还钉在窗口顶部，就会飘在小猫上方一大截，看着像别人的气泡。
+ * 刻意**不含** gazeShift——鼠标一动气泡就跟着上下抖，很廉价。
+ */
+const petTopY = computed(() => {
+  const bounds = currentBounds.value
+  const { h: winH } = winSize.value
+  const sy = winH - canvas.value.h + bounds.y
+  return winH + (sy - winH) * petScale.value
+})
+
+/**
+ * 气泡定位。用 `bottom` 而不是 `top`：气泡高度随文案折行数变化，
+ * 用 `top` 得先量高度再回算，气泡出现的第一帧会先落在宠物脸上再弹上去。
+ */
+const bubbleAnchor = ref<HTMLElement | null>(null)
+/** 量出来的气泡高度，只用于「头顶空间不够」时的兜底夹取；量不到（0）时不影响正常定位 */
+const bubbleHeight = ref(0)
+
+const bubbleStyle = computed(() => {
+  const { h: winH } = winSize.value
+  // 尾尖落在头顶上方 BUBBLE_GAP 处
+  const snug = winH - (petTopY.value - BUBBLE_GAP)
+  // 夹取：顶边不得高于 BUBBLE_MIN_TOP（量不到高度时这一项退化为「不夹」）
+  const guarded = winH - BUBBLE_MIN_TOP - bubbleHeight.value
+  return { bottom: `${Math.min(snug, guarded).toFixed(1)}px` }
+})
 
 let bubbleTimer: number | null = null
 let clickRevertTimer: number | null = null
@@ -160,6 +207,16 @@ function showBubble(payload: SpeakPayload): void {
     }, 220)
   }, hold)
 }
+
+// 文案换了就得重新量高度（折行数会变）。量的是布局高度，入场动画的 transform 不影响它。
+watch(bubbleText, async (text) => {
+  if (!text) {
+    bubbleHeight.value = 0
+    return
+  }
+  await nextTick()
+  bubbleHeight.value = bubbleAnchor.value?.offsetHeight ?? 0
+})
 
 function applyReload(payload: ReloadPayload | null): void {
   if (!payload) return
@@ -283,24 +340,33 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="pet-stage" :style="{ '--pet-scale': String(petScale) }">
-    <div class="pet-hit" :style="hitBoxStyle">
-      <div class="pet-gaze" :style="gazeStyle">
-        <PetSpriteSheet
-          v-if="useSheet && manifest"
-          :manifest="manifest"
-          :source="petSource"
-          :state="state"
-          :facing="renderFacing"
-          :scale="petScale"
-          @finished="(s) => s === 'click' && revertToBase()"
-          @failed="() => (spriteFailed = true)"
-        />
-        <div v-else class="pet-fallback">
-          <PetSprite :kind="kind" :state="state" :facing="renderFacing" />
+  <!--
+    气泡**刻意放在 .pet-stage 外面**：stage 整体套了 scale(var(--pet-scale))，
+    气泡留在里面就会跟着宠物一起缩——宠物调到 75% 时 12px 的字只剩 9px，桌面上根本看不清。
+    这一层只提供"窗口坐标系"的定位参照，字号永远按 DIP 绝对值渲染。
+  -->
+  <div class="pet-root">
+    <div class="pet-stage" :style="{ '--pet-scale': String(petScale) }">
+      <div class="pet-hit" :style="hitBoxStyle">
+        <div class="pet-gaze" :style="gazeStyle">
+          <PetSpriteSheet
+            v-if="useSheet && manifest"
+            :manifest="manifest"
+            :source="petSource"
+            :state="state"
+            :facing="renderFacing"
+            :scale="petScale"
+            @finished="(s) => s === 'click' && revertToBase()"
+            @failed="() => (spriteFailed = true)"
+          />
+          <div v-else class="pet-fallback">
+            <PetSprite :kind="kind" :state="state" :facing="renderFacing" />
+          </div>
         </div>
       </div>
     </div>
-    <Bubble v-if="bubbleText" :text="bubbleText" :leaving="bubbleLeaving" />
+    <div v-if="bubbleText" ref="bubbleAnchor" class="bubble-anchor" :style="bubbleStyle">
+      <Bubble :text="bubbleText" :leaving="bubbleLeaving" />
+    </div>
   </div>
 </template>

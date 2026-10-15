@@ -92,7 +92,7 @@ const sedentaryStatusText = computed(() => {
   const item = current.sedentary
   if (!item.present) {
     // 这条要讲清楚：久坐时长统计的是"连续活跃"，不是墙上时间，离开会自动中断
-    return `已判定你离开座位（空闲 ${formatSpan(item.idleSec * 1000)}）· 空闲超过 ${formatThreshold(item.awaySec)} 就暂停累计`
+    return `你似乎离开了座位（已空闲 ${formatSpan(item.idleSec * 1000)}）· 超过 ${formatThreshold(item.awaySec)} 暂停计时`
   }
   if (item.activeMs === 0) return '人在电脑前，开始累计'
   return `已连续活跃 ${formatSpan(item.activeMs)} / 目标 ${formatSpan(item.remindMs)}`
@@ -137,8 +137,7 @@ onBeforeUnmount(() => {
 <template>
   <h2 class="page-title">专注与提醒</h2>
   <p class="page-desc">
-    计时器由主进程持有唯一真源（保存绝对结束时间戳），因此关闭设置窗口、甚至合盖休眠都不会影响计时准确性。
-    到点时系统通知、托盘提示、宠物动画三路并行提醒——「专注/勿扰模式」会抑制系统通知，所以不能只依赖它。
+    关闭设置窗口甚至合盖休眠都不会影响计时。到点时宠物会来提醒你。
   </p>
 
   <el-card class="section-card" shadow="never" header="番茄钟">

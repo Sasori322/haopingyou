@@ -21,6 +21,7 @@ import {
 } from '@shared/types/todo'
 import type { StickyColor, StickyNote, TodoItem, TodoPriority, TodoSnapshot } from '@shared/types/todo'
 import { formatDateTime, formatDueShort, formatOverdueSpan } from '@/common/todo-date'
+import { NOTE_SKIN } from '@/common/note-skin'
 
 const snapshot = ref<TodoSnapshot | null>(null)
 /** 每 30 秒走一次的"现在"：让"已过期 3 分钟"和 今天/明天 的分档自己往前走，不用刷新页面 */
@@ -34,7 +35,6 @@ const notes = computed(() => snapshot.value?.notes ?? [])
 const stats = computed(
   () => snapshot.value?.stats ?? { total: 0, active: 0, done: 0, todayDue: 0, overdue: 0 }
 )
-const storageFile = computed(() => snapshot.value?.storageFile ?? '')
 
 function applySnapshot(next: TodoSnapshot): void {
   snapshot.value = next
@@ -208,15 +208,6 @@ async function saveEdit(): Promise<void> {
 
 // ---------------- 便签 ----------------
 
-/** 便签纸色：这是"内容色"不是品牌色，所以不套主题变量，与 Element Plus 的语义色也无关 */
-const NOTE_SKIN: Record<StickyColor, { bg: string; border: string; label: string }> = {
-  yellow: { bg: '#fffbe6', border: '#ffe58f', label: '黄' },
-  green: { bg: '#f0f9eb', border: '#c2e7b0', label: '绿' },
-  blue: { bg: '#eef6ff', border: '#bcdcff', label: '蓝' },
-  pink: { bg: '#fff0f6', border: '#ffc2dd', label: '粉' },
-  purple: { bg: '#f6f0ff', border: '#d9c7ff', label: '紫' }
-}
-
 const noteDraft = reactive({ text: '', color: 'yellow' as StickyColor })
 
 async function addNote(): Promise<void> {
@@ -290,10 +281,7 @@ onBeforeUnmount(() => {
 <template>
   <h2 class="page-title">待办与便签</h2>
   <p class="page-desc">
-    数据保存在 <code>{{ storageFile }}</code>（原子写 + 防抖，所有写操作统一串行在主进程）。
-    访问统一走 Repository 接口层，将来若需要全文检索可以平滑替换为 SQLite。
-    <br />
-    与剪贴板历史<strong>分开存</strong>：剪贴板会自动淘汰，待办一条都不会被丢掉。
+    待办不会像剪贴板那样自动清理，写下的每一条都会保留。
   </p>
 
   <el-card class="section-card" shadow="never">
@@ -346,8 +334,7 @@ onBeforeUnmount(() => {
       <el-button type="primary" @click="addTodo">添加</el-button>
     </div>
     <div class="create-hint">
-      标签用逗号或空格分隔，单个 ≤{{ TODO_TAG_MAX }} 字（字母数字、下划线、短横、中文）；
-      截止时间留空 = 不提醒。到点会经系统的提醒通道（系统通知 + 宠物气泡 + 托盘提示）通知你。
+      标签用逗号或空格分隔，单个 ≤{{ TODO_TAG_MAX }} 字。设了截止时间，到点宠物会提醒你。
     </div>
   </el-card>
 

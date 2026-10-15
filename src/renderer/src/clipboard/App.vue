@@ -184,7 +184,7 @@ const pausedRemain = computed<string | null>(() => {
       <span class="clip-pause" v-if="pausedRemain">已暂停 · 还剩 {{ pausedRemain }}</span>
       <button class="clip-btn" :disabled="!!pausedRemain" @click="pause(5)">暂停 5 分钟</button>
       <button class="clip-btn" :disabled="!!pausedRemain" @click="pause(30)">暂停 30 分钟</button>
-      <button class="clip-btn" v-if="pausedRemain" @click="pause(null)">恢复采集</button>
+      <button class="clip-btn" v-if="pausedRemain" @click="pause(null)">恢复记录</button>
       <button class="clip-btn clip-btn--danger" :disabled="entries.length === 0" @click="clearAll">清空</button>
     </header>
 
@@ -230,7 +230,7 @@ const pausedRemain = computed<string | null>(() => {
     <footer class="clip-footer">
       <div>
         <span>{{ entries.length }} 条</span>
-        <span v-if="status?.listeningImages"> · 已开启图片采集</span>
+        <span v-if="status?.listeningImages"> · 已开启图片记录</span>
       </div>
       <div class="clip-footer__shortcut">
         <span class="shortcut-item"><span class="kbd">↑↓</span>切换</span>

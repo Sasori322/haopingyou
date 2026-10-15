@@ -21,6 +21,12 @@ body,
   position: relative;
 }
 
+/* 气泡定位层与 .pet-stage 平级，给气泡一个不受 petScale 影响的坐标系 */
+.pet-root {
+  position: absolute;
+  inset: 0;
+}
+
 .pet-hit {
   pointer-events: auto;
 }
@@ -205,20 +211,35 @@ body,
 
 /* ---------------- 气泡 ---------------- */
 
-.bubble {
+/*
+ * 气泡定位层。横向铺满窗口并用 flex 居中，纵向由渲染层按宠物当前姿态算出 `bottom`
+ * （贴着头顶走）。**必须与 .pet-stage 平级**——stage 整体套了 scale(var(--pet-scale))，
+ * 气泡留在里面就会跟着宠物一起缩，宠物调小后字就看不清了。
+ *
+ * 这里同时承担了居中，所以气泡自己的 transform 可以专心做入场/退场动画。
+ */
+.bubble-anchor {
   position: absolute;
-  left: 50%;
-  top: 2px;
-  transform: translateX(-50%);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  will-change: bottom;
+}
+
+.bubble {
+  position: relative;
   max-width: 200px;
-  padding: 7px 11px;
+  padding: 8px 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.97);
   border: 1px solid rgba(0, 0, 0, 0.08);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
   color: #303133;
   font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
-  font-size: 12px;
+  /* 字号是 DIP 绝对值，**不乘 --pet-scale**：宠物多小，字都保持这个大小 */
+  font-size: 14px;
   line-height: 1.5;
   text-align: center;
   pointer-events: none;
@@ -243,21 +264,22 @@ body,
   animation: bubble-out 0.22s ease-in forwards;
 }
 
+/* 居中交给 .bubble-anchor，这两个动画只负责自己的缩放/位移 */
 @keyframes bubble-in {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(4px) scale(0.9);
+    transform: translateY(4px) scale(0.9);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
+    transform: translateY(0) scale(1);
   }
 }
 
 @keyframes bubble-out {
   to {
     opacity: 0;
-    transform: translateX(-50%) translateY(-4px) scale(0.94);
+    transform: translateY(-4px) scale(0.94);
   }
 }
 

@@ -74,6 +74,7 @@ src/
 │  ├─ pet.html / settings.html / clipboard.html / todo.html   四个独立渲染入口
 │  └─ src/
 │     ├─ common/todo-date.ts    待办时间展示（设置页与面板共用，保证"已过期"口径一致）
+│     ├─ common/note-skin.ts    便签纸色（同上，两处共用，避免配色漂移）
 │     ├─ pet/                   宠物窗口（轻量，不引 Element Plus）
 │     │  ├─ core/usePointerBridge.ts   ★ 两段式点击穿透的渲染层实现
 │     │  ├─ core/hitTest.ts            几何命中判定（按动画 bounds，含 petScale 与镜像）
@@ -84,7 +85,7 @@ src/
 │     │     └─ Bubble.vue              气泡
 │     ├─ settings/              设置窗口（Vue Router hash + Pinia + Element Plus）
 │     ├─ clipboard/             剪贴板历史面板（不引 Element Plus，纯 CSS + Vue，键盘导航）
-│     └─ todo-panel/            旁挂待办面板（同上，纯 CSS + Vue，常驻显示未完成项）
+│     └─ todo-panel/            旁挂面板（同上，纯 CSS + Vue）：待办 / 便签两个页签，常驻可见
 ├─ shared/                      主 / preload / 渲染三方共享：仅类型与常量
 resources/
 ├─ pets/cat|dog|siamese/manifest.json   宠物清单（`cat` / `siamese` 的 PNG 已就绪即序列帧模式）
@@ -182,6 +183,11 @@ resources/pets/cat/
 - `bubbles` 的 key 对应触发原因（click / walk / sleep / eat / hot / focus / rest / drag / drop）
 
 素材缺失时 `hasAssets` 为 `false`，渲染层自动回退为内置 SVG 占位形象，不会白屏也不会崩。
+
+**气泡（宠物说的话）不参与缩放**：整个 `.pet-stage` 套了 `scale(--pet-scale)`，所以气泡**刻意放在它外面**
+（`.bubble-anchor` 与 stage 平级），字号固定 `14px` DIP —— 宠物调到 50% 时字还是这么大。
+纵向按**当前姿态 `bounds` 的顶边**贴着头顶走；头顶地方不够时（拎起来那族几乎占满窗口）顶边夹在 2px，
+宁可与宠物重叠，也不让窗口把半行字裁掉。
 
 `resources/pets/` 与 `resources/icons/` 通过 `extraResources` 投放到 `process.resourcesPath`，
 **不进 asar**（大图进 asar 读取慢，且工具无法直接访问）。
@@ -323,7 +329,7 @@ npm run icons:build   # → build/icon.png、build/icon.ico（16–256 多尺寸
 | **M2.5 鼠标跟随 + 沉浸躲开** | ✅ | 见 `docs/STATUS.md` 第二部分 |
 | **M3 久坐 / 喝水 / 投递层** | ✅ | 加速模式下出 7/7 实机自检。投递层 + 免打扰（丢弃不补发） + 沉浸挂起（补发最近一条） |
 | **M3.5 剪贴板历史** | ✅ | 2026-10-15：800ms 轮询 + 100/30 天 + pinned，clipboard-img:// 协议 + Ctrl+Shift+V 面板。**2026-10-15 二轮**：自定义存储目录（绝对路径校验）+ 自定义唤起快捷键（format + register-noop 试探，可禁用）。**2026-10-15 三轮**：录制热键（e.code 翻译物理键 + IPC suspend/resend 旧键避免误触）。`docs/STATUS.md` 第二部分"已完成 · 5"展开 |
-| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口）+ 宠物右键快速记一条 + 截止提醒（经投递层）。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
+| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口，**待办 / 便签两个页签**）+ 宠物右键快速记一条 + 截止提醒（经投递层）。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
 | M3.x 番茄钟 / 系统监控 | 待做 | 设置项齐全，逻辑未接 |
 | M4 打包发布 | 待办 | NSIS / portable 实机验证、图标、SmartScreen 说明 |
 
@@ -355,10 +361,12 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 
 | 变量 | 作用 |
 |---|---|
-| `HPY_CAPTURE_PET=<路径>` | 截图宠物窗口（保留 alpha）+ 跑一遍渲染层诊断脚本（DOM 结构 / 命中框 / 画布不透明像素数 / 气泡文本 / 图片与 fetch 探测），导出 `*.canvas.png` 与 `*.diag.json` 后退出。**透明窗口最典型的失败模式是「截到空帧」，自检先看它**。配 `HPY_CAPTURE_PET_WAIT_MS` 推迟截图时刻（默认 1500） |
+| `HPY_CAPTURE_PET=<路径>` | 截图宠物窗口（保留 alpha）+ 跑一遍渲染层诊断脚本（DOM 结构 / 命中框 / 画布不透明像素数 / 气泡文本**与气泡字号·像素矩形** / 图片与 fetch 探测），导出 `*.canvas.png` 与 `*.diag.json` 后退出。**透明窗口最典型的失败模式是「截到空帧」，自检先看它**。配 `HPY_CAPTURE_PET_WAIT_MS` 推迟截图时刻（默认 1500）。诊断里的 `bubbleFont` / `bubbleRect` 是**跨缩放比对**用的：换个 `petScale` 再截一次，字号与高度必须一模一样，且 `bubbleInsideScaledStage` 必须为 `false` |
 | `HPY_SPEAK=<台词>` | 与 `HPY_CAPTURE_PET` 连用：截图前先让宠物把这句话说出来，用来**确定性**地拿到带气泡的截图。气泡只存在 3200ms，靠等提醒自己触发就得掐着秒表碰运气 |
 | `HPY_FORCE_STATE=<状态名>` | 把宠物**钉在指定状态**（每 200ms 重设一次，否则会被行为调度器抢走）。给姿态族做尺寸 / 观感裁定时用——窗口尺寸固定，逐族截图并排就是用户视角 |
 | `HPY_OPEN_SETTINGS=1` | 自动打开设置窗口、把渲染层 console 转发到主进程日志、逐个路由 dump DOM 证据后退出（设置页只能从托盘进，手工路径太长；而「页面空白」和「只是没数据」在日志里长得一样） |
+| `HPY_CAPTURE_SETTINGS=<路径>` | 打开设置窗口截图后退出。配 `_ROUTE=<hash 路由>` 直开某一页、`_WAIT=<选择器>` 等标志物出现再截、`_SCROLL=<选择器>` 先滚过去、`_EVAL=<js>` 在页面里跑一段代码——**这是唯一能端到端验证「渲染层 → preload → IPC → 落盘 → 广播回渲染层」的手段** |
+| `HPY_CAPTURE_TODO_PANEL=<路径>` | 打开旁挂面板截图后退出。配 `_FOCUS=1` 验「宠物右键 → 光标落到快速录入框」、`_TAB=notes` 直开便签页签。诊断脚本会**依次点过两个页签再还原**，所以一次运行同时证实「页签能切」和「两个列表各渲染了多少条」 |
 | `HPY_FAST_REMIND=1` | 把提醒阈值从分钟压到秒（久坐 20s / 喝水 25s / 离开判定 45s）。**三者的相对大小关系不能乱改**，否则加速模式自己就不可测了 |
 | `HPY_DEBUG_GAZE=1` | 打印鼠标跟随的采样日志（光标位置 / 观察原点 / 距离 / 量化后的方位） |
 | `HPY_DEBUG_POINTER=1` | 打印**穿透态的每次切换**（穿透 ↔ 可交互）。只在「进入 / 离开命中区」两个边沿触发，条数与鼠标行为同阶、不刷屏。**排查「宠物点不动 / 拖不动」先看它**：显示之后若一直停在「穿透」，就是两段式握手的回边断了 |

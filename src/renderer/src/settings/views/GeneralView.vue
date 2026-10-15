@@ -37,7 +37,7 @@ async function toggleAutostart(value: boolean): Promise<void> {
   try {
     const actual = await window.petAPI.app.setAutostart(value)
     if (actual !== value) {
-      ElMessage.warning('开发环境不会写入开机启动项，安装包安装后才会生效')
+      ElMessage.warning('开机自启需要安装版才能生效')
     } else {
       ElMessage.success(value ? '已开启开机自启' : '已关闭开机自启')
     }
@@ -62,9 +62,7 @@ async function confirmQuit(): Promise<void> {
 
 <template>
   <h2 class="page-title">通用</h2>
-  <p class="page-desc">
-    宠物窗口是透明、置顶、不进任务栏的独立窗口。改变这里的开关会立即作用于桌面上的宠物。
-  </p>
+  <p class="page-desc">改变这里的开关会立即作用于桌面上的宠物。</p>
 
   <el-card class="section-card" shadow="never">
     <div class="setting-row">
@@ -84,9 +82,7 @@ async function confirmQuit(): Promise<void> {
     <div class="setting-row">
       <div>
         <div class="setting-row__label">宠物大小</div>
-        <div class="setting-row__hint">
-          当前 {{ Math.round(petScale * 100) }}% · 最大 100%，再大拎起来的姿势会超出窗口被切掉
-        </div>
+        <div class="setting-row__hint">当前 {{ Math.round(petScale * 100) }}%</div>
       </div>
       <el-slider
         v-model="petScale"
@@ -99,7 +95,7 @@ async function confirmQuit(): Promise<void> {
     <div class="setting-row">
       <div>
         <div class="setting-row__label">跟随系统负载</div>
-        <div class="setting-row__hint">系统繁忙时宠物会表现出吃力的样子（功能将在后续版本生效）</div>
+        <div class="setting-row__hint">系统繁忙时宠物会表现出吃力的样子（即将推出）</div>
       </div>
       <el-switch v-model="reactToLoad" />
     </div>

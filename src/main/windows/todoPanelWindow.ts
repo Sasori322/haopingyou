@@ -22,8 +22,17 @@ let pendingFocusQuickAdd = false
  * 拖动靠 CSS 的 `-webkit-app-region: drag`（见面板样式里的 header），
  * 关闭按钮在面板自己头上，所以不会出现"没有标题栏就关不掉"。
  */
-export function openTodoPanel(options?: { focusQuickAdd?: boolean }): BrowserWindow {
+export function openTodoPanel(options?: {
+  focusQuickAdd?: boolean
+  /**
+   * 直开某个页签（渲染层读 `location.hash`）。
+   * **只在新建窗口时生效**：面板已经开着就只是把它唤到前面，不切页签
+   * —— 目前唯一的调用方是自检钩子，不值得为它多加一条 IPC。
+   */
+  initialTab?: 'todo' | 'notes'
+}): BrowserWindow {
   const wantFocus = options?.focusQuickAdd === true
+  const initialTab = options?.initialTab
   const existing = getTodoPanel()
   if (existing) {
     if (existing.isMinimized()) existing.restore()
@@ -87,10 +96,14 @@ export function openTodoPanel(options?: { focusQuickAdd?: boolean }): BrowserWin
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
+  const hash = initialTab === 'notes' ? 'notes' : ''
   if (!app.isPackaged && devUrl) {
-    void win.loadURL(`${devUrl}/todo.html`)
+    void win.loadURL(`${devUrl}/todo.html${hash ? `#${hash}` : ''}`)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/todo.html'))
+    void win.loadFile(
+      join(__dirname, '../renderer/todo.html'),
+      hash ? { hash } : undefined
+    )
   }
 
   panelWindow = win
