@@ -15,6 +15,7 @@ import { immersiveWatcher } from './immersiveWatcher'
 import { notifier } from './notifier'
 import { getSettings, patchSettings } from './settingsService'
 import { openClipboardPanel } from '../windows/clipboardWindow'
+import { openTodoPanel, toggleTodoPanel } from '../windows/todoPanelWindow'
 
 const log = createLogger('tray')
 
@@ -150,6 +151,7 @@ function buildTemplate(): MenuItemConstructorOptions[] {
     ...dndMenuItems(),
     { type: 'separator' },
     { label: '剪贴板历史…', click: () => openClipboardPanel() },
+    { label: '待办与便签面板…', click: () => toggleTodoPanel() },
     { type: 'separator' },
     { label: '设置…', click: () => openSettingsWindow() },
     {
@@ -222,6 +224,11 @@ export function popupPetMenu(): void {
     { label: '让它走走', click: () => petApp.startWalk(Math.random() < 0.5 ? -1 : 1, 3500) },
     { label: '让它睡觉', click: () => petApp.sleep() },
     { label: '喂点东西', click: () => petApp.eat() },
+    { type: 'separator' },
+    // 「与宠物联动」那条 PRD：宠物右键即可快速添加一条待办。
+    // 实现是"打开面板并把光标落到快速录入框"，而不是在菜单里做一个输入框 ——
+    // 原生菜单承载不了带校验的文本输入，用完还得再想办法回收，不如复用面板。
+    { label: '记一条待办…', click: () => openTodoPanel({ focusQuickAdd: true }) },
     { type: 'separator' },
     {
       label: '让宠物躲开',

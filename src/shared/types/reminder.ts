@@ -16,8 +16,9 @@ export interface DeliveredReminder {
   /** 系统通知正文 */
   body: string
   /**
-   * 宠物实际说出的那一句（读的是气泡表，可能被 pet manifest 覆盖，
-   * 也可能因为宠物被用户藏起来而没说出来 → null）
+   * 宠物实际说出的那一句（读的是气泡表，可能被 pet manifest 覆盖）。
+   * `null` = 没说出来，两种情况：宠物被用户藏起来了，或该提醒类型没有气泡台词。
+   * 这两种情况投递层会退回系统通知（见 notifier 类注释）。
    */
   bubble: string | null
   at: number

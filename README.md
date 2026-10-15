@@ -39,7 +39,8 @@ src/
 │  ├─ windows/
 │  │  ├─ petWindow.ts           透明宠物窗口（穿透、置顶、不进任务栏、不抢焦点）
 │  │  ├─ settingsWindow.ts      设置窗口 + 全窗口广播
-│  │  └─ clipboardWindow.ts     剪贴板历史面板（独立窗口，快照式）
+│  │  ├─ clipboardWindow.ts     剪贴板历史面板（独立窗口，快照式）
+│  │  └─ todoPanelWindow.ts     旁挂待办面板（无边框 + 置顶的独立窗口，不占宠物窗口拦截面积）
 │  ├─ pet/
 │  │  ├─ petLibrary.ts          扫描 resources/pets 与 userData/pets，读 manifest（扫目录 ⇒ 加宠物零代码）
 │  │  ├─ displayManager.ts      多屏 workArea / 贴地 / 左右边界
@@ -51,6 +52,10 @@ src/
 │  │  ├─ clipboardWatcher.ts    800ms 轮询 Electron 44 异步 Clipboard API（readText/read/ClipboardItem）
 │  │  ├─ clipboardHotkey.ts     全局快捷键 format + register-noop 试探 + 调 un/register
 │  │  └─ index.ts               IPC 入口、clipboard-img:// 协议、托盘接线、状态广播、动态切目录
+│  ├─ todo/
+│  │  ├─ todoStore.ts           待办/便签的 Repository 接口 + JSON 原子写实现（换 SQLite 只改这一处）
+│  │  ├─ todoReminder.ts        截止提醒（比对绝对 dueAt，投递一律经 notifier）
+│  │  └─ index.ts               数据层出口：快照、写后广播、同步落盘
 │  ├─ services/
 │  │  ├─ ipcRegistry.ts         全部 IPC 通道注册 + 入参白名单校验
 │  │  ├─ tray.ts                托盘菜单
@@ -62,12 +67,13 @@ src/
 │  │  ├─ foregroundProbe.ts     常驻 PowerShell 辅助进程：前台窗口矩形 + 名单进程命中
 │  │  ├─ immersiveWatcher.ts    沉浸检测（名单 / 全屏 / 手动安静），双向 1.5s 防抖
 │  │  ├─ reminderScheduler.ts   久坐 / 喝水提醒（存绝对时间戳，不用累加计时器）
-│  │  └─ notifier.ts            提醒投递层：系统通知 + 宠物气泡 + 托盘提示，三路并行
+│  │  └─ notifier.ts            提醒投递层：优先宠物气泡，说不了才退回系统通知（托盘提示常伴）
 │  └─ utils/                    clamp / logger / paths / throttle
-├─ preload/index.ts             contextBridge → window.petAPI + window.petAPI.clipboard（白名单）
+├─ preload/index.ts             contextBridge → window.petAPI + .clipboard + .todo（白名单）
 ├─ renderer/
-│  ├─ pet.html / settings.html / clipboard.html   三个独立渲染入口
+│  ├─ pet.html / settings.html / clipboard.html / todo.html   四个独立渲染入口
 │  └─ src/
+│     ├─ common/todo-date.ts    待办时间展示（设置页与面板共用，保证"已过期"口径一致）
 │     ├─ pet/                   宠物窗口（轻量，不引 Element Plus）
 │     │  ├─ core/usePointerBridge.ts   ★ 两段式点击穿透的渲染层实现
 │     │  ├─ core/hitTest.ts            几何命中判定（按动画 bounds，含 petScale 与镜像）
@@ -77,7 +83,8 @@ src/
 │     │     ├─ PetSprite.vue           素材缺失时的内置 SVG 占位形象
 │     │     └─ Bubble.vue              气泡
 │     ├─ settings/              设置窗口（Vue Router hash + Pinia + Element Plus）
-│     └─ clipboard/             剪贴板历史面板（不引 Element Plus，纯 CSS + Vue，键盘导航）
+│     ├─ clipboard/             剪贴板历史面板（不引 Element Plus，纯 CSS + Vue，键盘导航）
+│     └─ todo-panel/            旁挂待办面板（同上，纯 CSS + Vue，常驻显示未完成项）
 ├─ shared/                      主 / preload / 渲染三方共享：仅类型与常量
 resources/
 ├─ pets/cat|dog|siamese/manifest.json   宠物清单（`cat` / `siamese` 的 PNG 已就绪即序列帧模式）
@@ -118,6 +125,10 @@ Windows 上 Electron **没有逐像素 alpha 命中测试**：`transparent: true
 1. **`setPetVisible()` 是可见性变化的唯一收口**。藏宠物前先强制置回穿透（`forceIgnoreMouse()`），
    显示后由主进程下发一次**指针重同步**（`PET_POINTER_SYNC`，附上主进程算好的光标窗口内坐标），
    渲染层据此**无条件**重算命中。任何直接调 `window.hide()` / `showInactive()` 的写法都是旁路，禁止。
+   它还必须**顺手记下"意图"**：窗口是 `show: false` 创建的，`ready-to-show` 才第一次真正显示，
+   在此之前调 `hide()` 是空操作——所以那个 `ready-to-show` 只能"按意图露面"，不能无条件
+   `showInactive()`，否则 `settings.petVisible=false` 的重启、以及开机自启的"静默 3 秒"都会被它抹掉
+   （2026-10-15 实机踩到并修复）。
 2. **重同步不复用缓存**：渲染层的 `setInteractive()` 对"值没变"直接返回（这正是它被去重掉的原因），
    而重同步路径必须每次都真的算、真的下发。
 3. **系统唤醒 / 解锁 / 屏幕变化后也要重同步**（`reclaim` 里一并做）——宠物可能被挪动过，
@@ -312,10 +323,11 @@ npm run icons:build   # → build/icon.png、build/icon.ico（16–256 多尺寸
 | **M2.5 鼠标跟随 + 沉浸躲开** | ✅ | 见 `docs/STATUS.md` 第二部分 |
 | **M3 久坐 / 喝水 / 投递层** | ✅ | 加速模式下出 7/7 实机自检。投递层 + 免打扰（丢弃不补发） + 沉浸挂起（补发最近一条） |
 | **M3.5 剪贴板历史** | ✅ | 2026-10-15：800ms 轮询 + 100/30 天 + pinned，clipboard-img:// 协议 + Ctrl+Shift+V 面板。**2026-10-15 二轮**：自定义存储目录（绝对路径校验）+ 自定义唤起快捷键（format + register-noop 试探，可禁用）。**2026-10-15 三轮**：录制热键（e.code 翻译物理键 + IPC suspend/resend 旧键避免误触）。`docs/STATUS.md` 第二部分"已完成 · 5"展开 |
-| M3.x 番茄钟 / 待办便签 / 系统监控 / 待办截止 | 待做 | 设置项齐全，逻辑未接 |
+| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口）+ 宠物右键快速记一条 + 截止提醒（经投递层）。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
+| M3.x 番茄钟 / 系统监控 | 待做 | 设置项齐全，逻辑未接 |
 | M4 打包发布 | 待办 | NSIS / portable 实机验证、图标、SmartScreen 说明 |
 
-设置窗口里番茄钟 / 待办 / 监控的**设置项已可正常保存**，功能逻辑随 M3 补齐。
+设置窗口里番茄钟 / 监控的**设置项已可正常保存**，功能逻辑随后续里程碑补齐。
 暹罗猫是新增的第三只宠物——`petLibrary` 是**扫目录**的，因此加宠物**零代码改动**：
 放对目录 + 写对 `manifest.json` 即自动出现在切换列表（`npm run assets:check` 显示 9/9 素材就绪）。
 
@@ -343,7 +355,8 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 
 | 变量 | 作用 |
 |---|---|
-| `HPY_CAPTURE_PET=<路径>` | 截图宠物窗口（保留 alpha）+ 跑一遍渲染层诊断脚本（DOM 结构 / 命中框 / 画布不透明像素数 / 图片与 fetch 探测），导出 `*.canvas.png` 与 `*.diag.json` 后退出。**透明窗口最典型的失败模式是「截到空帧」，自检先看它** |
+| `HPY_CAPTURE_PET=<路径>` | 截图宠物窗口（保留 alpha）+ 跑一遍渲染层诊断脚本（DOM 结构 / 命中框 / 画布不透明像素数 / 气泡文本 / 图片与 fetch 探测），导出 `*.canvas.png` 与 `*.diag.json` 后退出。**透明窗口最典型的失败模式是「截到空帧」，自检先看它**。配 `HPY_CAPTURE_PET_WAIT_MS` 推迟截图时刻（默认 1500） |
+| `HPY_SPEAK=<台词>` | 与 `HPY_CAPTURE_PET` 连用：截图前先让宠物把这句话说出来，用来**确定性**地拿到带气泡的截图。气泡只存在 3200ms，靠等提醒自己触发就得掐着秒表碰运气 |
 | `HPY_FORCE_STATE=<状态名>` | 把宠物**钉在指定状态**（每 200ms 重设一次，否则会被行为调度器抢走）。给姿态族做尺寸 / 观感裁定时用——窗口尺寸固定，逐族截图并排就是用户视角 |
 | `HPY_OPEN_SETTINGS=1` | 自动打开设置窗口、把渲染层 console 转发到主进程日志、逐个路由 dump DOM 证据后退出（设置页只能从托盘进，手工路径太长；而「页面空白」和「只是没数据」在日志里长得一样） |
 | `HPY_FAST_REMIND=1` | 把提醒阈值从分钟压到秒（久坐 20s / 喝水 25s / 离开判定 45s）。**三者的相对大小关系不能乱改**，否则加速模式自己就不可测了 |
@@ -377,12 +390,14 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 正常。`app.setLoginItemSettings` 只在打包后写入注册表——开发态 `process.execPath` 指向 `electron.exe`，
 写进去会导致开机弹出一个空壳。
 
-**系统通知不显示应用名 / 图标？**
-`app.setAppUserModelId` 必须与 `electron-builder.yml` 的 `appId` 完全一致，且安装包需要创建开始菜单快捷方式。
-开发态通知归属 `electron.exe` 属正常现象——通知**头顶那行小字**是 Windows toast 的「应用名」，
-由 AUMID 解析开始菜单快捷方式得到，开发态没有快捷方式就回落成 `electron.exe`，改标题改不掉它；
-打包安装后会自动变成 `productName`（好屏友）。
-**通知标题不受影响**：投递时统一加上宠物昵称前缀，实际看到的是「小可 · 该喝水啦」（昵称可在设置页宠物卡片上点 ✎ 改）。
+**系统通知里那行 "Electron" 能改成宠物名吗？**
+不能，所以**默认不出系统通知**。
+**头顶那行小字**是 Windows toast 的「应用名」，由 AUMID 解析开始菜单快捷方式得到，粒度是**应用**而不是**通知**——
+同一次运行里所有通知共用它，改不了单条。（`app.setAppUserModelId` 已与 `electron-builder.yml` 的 `appId` 对齐；
+开发态没有快捷方式就回落成 `Electron`，打包安装后自动变成 `productName`（好屏友），但**仍然不会**是宠物名。）
+现在的规则是：**宠物看得见就让宠物自己说**（气泡），只有宠物被藏起来、或该提醒类型还没配台词时，
+才退回系统通知兜底。宠物名一直写在通知**标题**里（「小可 · 该喝水啦」）。
+代价：正常提醒**没有提示音**——本项目唯一的发声源就是系统通知的 `silent: false`，气泡本身是无声的。
 
 **右键菜单跑到离宠物很远的地方？**
 `menu.popup({ x, y })` 里的 x / y 是**窗口客户区坐标**（Electron 内部会 `ClientToScreen` 换成屏幕坐标），

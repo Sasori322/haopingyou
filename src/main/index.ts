@@ -16,10 +16,13 @@ import { registerIpc } from './services/ipcRegistry'
 import { reminderScheduler } from './services/reminderScheduler'
 import { flushSettings, getSettings, patchSettings } from './services/settingsService'
 import { createTray, destroyTray, refreshTray } from './services/tray'
+import { flushTodo } from './todo'
+import { todoReminder } from './todo/todoReminder'
 import { createLogger } from './utils/logger'
 import { createPetWindow, getPetWindow, setPetVisible } from './windows/petWindow'
 import { openSettingsWindow } from './windows/settingsWindow'
 import { closeClipboardPanel } from './windows/clipboardWindow'
+import { closeTodoPanel, openTodoPanel } from './windows/todoPanelWindow'
 
 const log = createLogger('main')
 
@@ -69,6 +72,10 @@ function start(): void {
     closeClipboardPanel()
     flushClipboardSafe()
     unregisterClipboardHotkey()
+    // 待办：截止提醒先停（免得退出过程中又投一次），再关面板、同步落盘
+    todoReminder.stop()
+    closeTodoPanel()
+    flushTodoSafe()
     destroyTray()
   })
 
@@ -122,6 +129,8 @@ function onReady(): void {
   notifier.start()
   notifier.onDelivered = () => refreshTray()
   reminderScheduler.start()
+  // 待办截止提醒：同样必须在 notifier 之后启动（一 tick 就可能往里投递）
+  todoReminder.start()
 
   // 剪贴板全局快捷键：注册由 initClipboard 内部完成（用设置里的 hotkey，
   // 而不是再写一份硬编码）。下面只是兜底：如果注册后又被用户改坏，记一行日志。
@@ -131,6 +140,7 @@ function onReady(): void {
   maybeCapturePetWindow(petWindow)
   maybeProbeSettingsWindow()
   maybeCaptureSettingsWindow()
+  maybeCaptureTodoPanel()
   maybeVerifyPointerBridge()
 
   watchDisplayAndPower()
@@ -178,6 +188,12 @@ function maybeForceState(): void {
  *
  * 用途：Windows 上透明窗口最典型的失败模式就是「白底 / 灰色矩形轮廓」，
  * 这条自检能在不开 DevTools（DevTools 会破坏透明）的前提下验证透明是否成立。
+ *
+ * 验证**气泡版式**时配两个参数（与 `HPY_CAPTURE_SETTINGS_WAIT` 对称）：
+ * - `HPY_CAPTURE_PET_WAIT_MS`：等多久再截（默认 1500）；
+ * - `HPY_SPEAK=<台词>`：截图前先让宠物把这句话说出来。
+ * 气泡只存在 3200ms（`petApp.speak` 里的 `ms`），等提醒自己触发就得掐着秒表碰运气，
+ * 所以给了个"直接说一句"的入口。
  */
 function maybeCapturePetWindow(win: BrowserWindow): void {
   const target = process.env['HPY_CAPTURE_PET']
@@ -187,12 +203,20 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
     log.info(`[renderer:${level}] ${message}`)
   })
   win.webContents.once('did-finish-load', () => {
+    const waitMs = Number(process.env['HPY_CAPTURE_PET_WAIT_MS']) || 1500
     setTimeout(() => {
+      // 必须等 did-finish-load 之后再说话：渲染层是这时才挂上 onSpeak 监听的，
+      // 早于此刻发的 IPC 会掉进空气里（气泡不出现，还看不出为什么）。
+      const line = process.env['HPY_SPEAK']
+      if (line) {
+        log.info(`[截图] 让宠物说：${line} → ${petApp.speak('debug', line)}`)
+      }
       const diagnostic = `(async () => {
         const hit = document.querySelector('.pet-hit')
         const cv = document.querySelector('canvas.pet-sheet')
         const fb = document.querySelector('.pet-fallback')
         const gazeEl = document.querySelector('.pet-gaze')
+        const bubbleEl = document.querySelector('.bubble')
         let painted = 'n/a'
         if (cv) {
           try {
@@ -228,6 +252,7 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
           canvasBacking: cv ? [cv.width, cv.height] : null,
           canvasOpaquePixels: painted,
           fallback: !!fb,
+          bubble: bubbleEl ? bubbleEl.textContent : null,
           gazeWrap: gazeEl ? gazeEl.style.transform : 'MISSING',
           sheetTransform: cv ? cv.style.transform : 'MISSING',
           imageProbe,
@@ -267,7 +292,7 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
               app.quit()
             })
         )
-    }, 1500)
+    }, waitMs)
   })
 }
 
@@ -282,6 +307,10 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
  * 需要验证「点开之后长什么样」时，用 `HPY_CAPTURE_SETTINGS_CLICK=<CSS 选择器>` 先点一下再截；
  * 若是输入框类弹窗，再配 `HPY_CAPTURE_SETTINGS_TYPE=<文字>` 填值并点「保存」，就能端到端跑通
  * 一次真实提交（而不是只看弹窗长得对不对）。
+ *
+ * 需要跑一段**任意渲染层代码**（例如"调 IPC 改数据、再看界面有没有跟上"）时，
+ * 用 `HPY_CAPTURE_SETTINGS_EVAL=<js>`：它在页面上下文里以 async 函数体执行，返回值写进日志。
+ * 这是唯一能端到端验证"渲染层 → preload → 主进程 → 落盘 → 广播回渲染层"整条链的手段。
  */
 function maybeCaptureSettingsWindow(): void {
   const target = process.env['HPY_CAPTURE_SETTINGS']
@@ -289,6 +318,12 @@ function maybeCaptureSettingsWindow(): void {
   const route = process.env['HPY_CAPTURE_SETTINGS_ROUTE'] ?? '/pet'
   const clickSelector = process.env['HPY_CAPTURE_SETTINGS_CLICK'] ?? ''
   const typing = process.env['HPY_CAPTURE_SETTINGS_TYPE'] ?? ''
+  const evalBody = process.env['HPY_CAPTURE_SETTINGS_EVAL'] ?? ''
+  // 等哪个选择器出现再截。默认 .pet-card（最早做这个钩子时只服务宠物页）；
+  // 其它页要用自己的标志物，否则会白等满 8 秒（结果没错，只是慢）。
+  const waitSelector = process.env['HPY_CAPTURE_SETTINGS_WAIT'] ?? '.pet-card'
+  // 截图前滚到哪个元素（页面长了以后，下半部分那几张卡片截不到）
+  const scrollTo = process.env['HPY_CAPTURE_SETTINGS_SCROLL'] ?? ''
   const win = openSettingsWindow()
   win.webContents.on('console-message', (event) => {
     log.info(`[settings:${event.level}] ${event.message}`)
@@ -301,7 +336,7 @@ function maybeCaptureSettingsWindow(): void {
       location.hash = '#' + ${JSON.stringify(route)}
       for (let i = 0; i < 40; i++) {
         await new Promise((resolve) => setTimeout(resolve, 200))
-        if (document.querySelectorAll('.pet-card').length > 0) break
+        if (document.querySelectorAll(${JSON.stringify(waitSelector)}).length > 0) break
       }
       const selector = ${JSON.stringify(clickSelector)}
       const typing = ${JSON.stringify(typing)}
@@ -324,12 +359,30 @@ function maybeCaptureSettingsWindow(): void {
         await new Promise((resolve) => setTimeout(resolve, 1200))
         return el ? 'clicked ' + selector : 'NOT_FOUND ' + selector
       }
-      return document.querySelectorAll('.pet-card').length
+      const scrollTo = ${JSON.stringify(scrollTo)}
+      if (scrollTo) {
+        const anchor = document.querySelector(scrollTo)
+        if (anchor) anchor.scrollIntoView({ block: 'end' })
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      const evalBody = ${JSON.stringify(evalBody)}
+      if (evalBody) {
+        // 直接把用户给的代码内联进来，而不是 new Function —— 页面 CSP 是 script-src 'self'
+        // （没有 unsafe-eval），页面自己发起的 eval 会被拦，而 executeJavaScript 这种
+        // DevTools 通道里的代码不受 CSP 约束，内联进去才能跑。
+        const result = await (async () => {
+          ${evalBody}
+        })()
+        await new Promise((resolve) => setTimeout(resolve, 900))
+        return { eval: result }
+      }
+      return document.querySelectorAll(${JSON.stringify(waitSelector)}).length
     })()`
     void win.webContents
       .executeJavaScript(prepare, true)
       .then(async (cards: unknown) => {
-        log.info(`[截图] 设置页路由 ${route}，页面上宠物卡片 ${cards} 张`)
+        const detail = typeof cards === 'object' && cards !== null ? JSON.stringify(cards) : String(cards)
+        log.info(`[截图] 设置页路由 ${route}，标志物 ${waitSelector} → ${detail}`)
         await new Promise((resolve) => setTimeout(resolve, 600))
         const image = await win.webContents.capturePage()
         writeFileSync(target, image.toPNG())
@@ -337,6 +390,43 @@ function maybeCaptureSettingsWindow(): void {
       })
       .catch((error: unknown) => log.warn('设置窗口截图失败', error))
       .then(() => app.quit())
+  })
+}
+
+/**
+ * 开发期诊断：`HPY_CAPTURE_TODO_PANEL=<png>` 打开旁挂小面板，截一张图后退出。
+ *
+ * 面板是**无边框 + 置顶**的独立窗口，版式问题（拖动区压住按钮、窄宽度下文字折行）
+ * 只能看真实渲染；而它的入口是托盘菜单 + 宠物右键，手工路径很长。
+ * 与 `HPY_CAPTURE_SETTINGS` 对称。
+ */
+function maybeCaptureTodoPanel(): void {
+  const target = process.env['HPY_CAPTURE_TODO_PANEL']
+  if (!target) return
+  const win = openTodoPanel({
+    focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1'
+  })
+  win.webContents.on('console-message', (event) => {
+    log.info(`[todoPanel:${event.level}] ${event.message}`)
+  })
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      void win.webContents
+        .executeJavaScript(
+          `({ rows: document.querySelectorAll('.todo-row').length,
+              title: (document.querySelector('.todo-header__title') || {}).textContent || '',
+              active: document.activeElement ? document.activeElement.className : '' })`,
+          true
+        )
+        .then(async (info: unknown) => {
+          log.info('[截图] 待办面板', JSON.stringify(info))
+          const image = await win.webContents.capturePage()
+          writeFileSync(target, image.toPNG())
+          log.info(`[截图] 已写入 ${target}`)
+        })
+        .catch((error: unknown) => log.warn('待办面板截图失败', error))
+        .then(() => app.quit())
+    }, 2200)
   })
 }
 
@@ -560,5 +650,14 @@ function flushClipboardSafe(): void {
     flushClipboard()
   } catch (error) {
     log.warn('flush 剪贴板历史失败', error)
+  }
+}
+
+/** 退出前同步落盘（待办与便签） */
+function flushTodoSafe(): void {
+  try {
+    flushTodo()
+  } catch (error) {
+    log.warn('flush 待办与便签失败', error)
   }
 }

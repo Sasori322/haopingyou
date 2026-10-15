@@ -26,7 +26,10 @@ export interface ReminderRequest {
   /** 提醒时把宠物切到的状态（可选） */
   petState?: PetState
   petStateHoldMs?: number
-  /** 系统通知是否发声 */
+  /**
+   * 系统通知是否发声。只在**退回系统通知**那一路生效 —— 宠物气泡本身是无声的，
+   * 所以正常情况下（宠物看得见）提醒是不响的。
+   */
   sound?: boolean
 }
 
@@ -35,14 +38,21 @@ export interface ReminderRequest {
  *
  * ## 为什么要有独立一层（而不是每个功能自己弹）
  * 久坐、喝水、番茄钟、待办截止四件事的触发条件完全不同，但**投递方式完全一样**：
- * 系统通知 + 宠物气泡/状态 + 托盘提示。分开写就是同一段逻辑抄四遍，
+ * 宠物气泡/状态 + 系统通知 + 托盘提示。分开写就是同一段逻辑抄四遍，
  * 而且"免打扰""沉浸时别打扰"这种横切规则会漏掉某一处。
  *
- * ## 三路并行，不是三选一
- * 任何单独一路都不可靠，必须并行：
- * - **系统通知**会被 Windows 的「专注助手 / 勿扰模式」吞掉；
- * - **宠物气泡**在宠物被藏起来（用户手动隐藏 / 沉浸自动让路）时看不见；
- * - **托盘提示**只在用户主动看托盘时才看得到。
+ * ## 默认让宠物说，系统通知只做兜底
+ * **气泡是本体，系统通知是备用通道**，后者只在"说不了"时才发，共两种情况：
+ * 1. 宠物被用户藏起来了 —— 气泡发了也看不见；
+ * 2. 这个提醒类型没有气泡台词（`DEFAULT_BUBBLES` 里没这一项，比如尚未接线的番茄钟）。
+ *
+ * 为什么不默认出系统通知：通知顶部那行**应用署名**是 Windows 按 AUMID 解析出来的，
+ * 粒度是"应用"而不是"通知"，**改不成宠物名** —— dev 态没有匹配的开始菜单快捷方式，
+ * 就兜底显示宿主进程名 "Electron"；打包后会变成 productName（好屏友）。
+ * 两种都不像"橘子在提醒你"，反而像第三方弹窗，还和气泡重复打扰。
+ *
+ * 但这一路**不能删**：托盘提示只在用户主动看托盘时才看得到，宠物被藏起来时
+ * 系统通知是唯一还会自己冒出来的通道。
  *
  * ## 两条横切规则
  * 1. **免打扰 = 丢弃，不补发**。用户点"免打扰 1 小时"是明确意图，
@@ -130,7 +140,19 @@ class Notifier {
     // 昵称口径统一走 petApp.displayName（读 manifest.nickname），不要在这里另取一处。
     const title = `${petApp.displayName} · ${request.title}`
 
-    if (this.supported) {
+    // 先说，说得出来就不弹通知（理由见类注释）。宠物被用户手动藏起来时跳过说话：
+    // 气泡发了也看不见，状态切了也白切。
+    const speakable = isPetVisible()
+    let bubble: string | null = null
+    if (speakable) {
+      if (request.petState) {
+        petApp.setState(request.petState, `remind:${request.kind}`, request.petStateHoldMs)
+      }
+      bubble = petApp.speak(request.kind, request.bubble)
+    }
+
+    // 兜底：没说出话（宠物藏着 / 该类型没台词）才走系统通知，否则会和气泡重复打扰
+    if (bubble === null && this.supported) {
       try {
         new Notification({
           title,
@@ -142,16 +164,6 @@ class Notifier {
       }
     }
 
-    // 宠物被用户手动藏起来时跳过：气泡发了也看不见，状态切了也白切
-    const speakable = isPetVisible()
-    let bubble: string | null = null
-    if (speakable) {
-      if (request.petState) {
-        petApp.setState(request.petState, `remind:${request.kind}`, request.petStateHoldMs)
-      }
-      bubble = petApp.speak(request.kind, request.bubble)
-    }
-
     this.last = {
       kind: request.kind,
       title,
@@ -159,7 +171,11 @@ class Notifier {
       bubble,
       at: Date.now()
     }
-    log.info(`提醒已投递：${request.kind} · ${title} —— ${request.body}${bubble ? ` · 宠物说「${bubble}」` : ''}`)
+    log.info(
+      `提醒已投递：${request.kind} · ${title} —— ${request.body}${
+        bubble ? ` · 宠物说「${bubble}」` : ' · 宠物不可见或无台词，改用系统通知'
+      }`
+    )
     this.onDelivered?.()
   }
 }

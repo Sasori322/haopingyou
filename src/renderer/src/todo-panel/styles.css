@@ -1,0 +1,255 @@
+/* 待办面板的视觉：一列"今天要做的事"，窄、密、常驻。
+   与剪贴板面板同一立场——不加 Element Plus，避免一个窗口撑两套样式。
+   主题色沿用 var(--el-color-primary)（带兜底值），与设置页同源，不硬编码品牌色。 */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: #1f1f1f;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font: inherit;
+}
+
+.todo-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: #ffffff;
+}
+
+/* ---------------- 头部（兼作窗口拖动区） ---------------- */
+
+.todo-header {
+  /* 无边框窗口靠这一行拖动；按钮必须显式 no-drag 否则点不动 */
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  flex: 0 0 auto;
+}
+
+.todo-header__title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+
+.todo-header__counts {
+  font-size: 11px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-header__close {
+  -webkit-app-region: no-drag;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 15px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.todo-header__close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* ---------------- 快速录入 ---------------- */
+
+.todo-quick {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f2f4;
+  flex: 0 0 auto;
+}
+
+.todo-quick__input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #d4d4d8;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  outline: none;
+  color: #1f1f1f;
+  background: #fff;
+}
+
+.todo-quick__input:focus {
+  border-color: var(--el-color-primary, #409eff);
+}
+
+.todo-btn {
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.todo-btn:hover {
+  border-color: #a1a1aa;
+}
+
+.todo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.todo-btn--primary {
+  background: var(--el-color-primary, #409eff);
+  border-color: var(--el-color-primary, #409eff);
+  color: #fff;
+}
+
+/* ---------------- 列表 ---------------- */
+
+.todo-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px 8px;
+}
+
+.todo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+}
+
+.todo-row:hover {
+  background: #f9fafb;
+  border-color: #eef0f3;
+}
+
+.todo-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 1.6px solid #c8ccd4;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.todo-check:hover {
+  border-color: var(--el-color-primary, #409eff);
+}
+
+.todo-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-row__title {
+  color: #1f2937;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.todo-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.todo-chip {
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.todo-chip--overdue {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.todo-chip--today {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.todo-chip--high {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.todo-chip--later {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.todo-row__del {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: #c8ccd4;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  line-height: 1;
+  font-size: 13px;
+}
+
+.todo-row:hover .todo-row__del {
+  opacity: 1;
+}
+
+.todo-row__del:hover {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.todo-empty {
+  text-align: center;
+  color: #9ca3af;
+  padding: 44px 18px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+/* ---------------- 底部 ---------------- */
+
+.todo-footer {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border-top: 1px solid #e5e7eb;
+  background: #fafbfc;
+  font-size: 11px;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

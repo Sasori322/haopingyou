@@ -22,6 +22,20 @@ let petWindow: BrowserWindow | null = null
  */
 let visibilityListener: ((visible: boolean) => void) | null = null
 
+/**
+ * 期望可见性——记的是**意图**，不是窗口的真实状态（真实状态永远只看 `isVisible()`）。
+ *
+ * 为什么必须单独记着：窗口是 `show: false` 创建的，而 `ready-to-show` 一到就无条件
+ * `showInactive()`。于是任何「启动那一刻就该藏着」的意图都会在窗口真正能显示时被抹掉——
+ * `setPetVisible(false)` 执行时窗口压根还没显示过，`hide()` 是空操作；紧接着 `ready-to-show`
+ * 又把它显示出来。表现就是 **`settings.petVisible=false` 重启后宠物照样冒出来**
+ * （2026-10-15 实机踩到）。开机自启的「静默 3 秒后现身」同样被它毁掉：宠物会先闪一下，
+ * 3 秒后再被 `setPetVisible(true)` 显示一次。
+ *
+ * 意图只用来决定 `ready-to-show` 时要不要露面；此后一切以窗口真实状态为准。
+ */
+let desiredVisible = true
+
 export function onPetVisibilityChange(fn: (visible: boolean) => void): void {
   visibilityListener = fn
 }
@@ -86,6 +100,13 @@ export function createPetWindow(canvas?: { w: number; h: number }): BrowserWindo
   win.setIgnoreMouseEvents(true, { forward: true })
 
   win.once('ready-to-show', () => {
+    // 窗口此刻才**第一次**能显示：按当前意图办，而不是无脑露面。
+    // 这一句是「petVisible=false 重启后宠物还冒出来」的修复点：那时 setPetVisible(false)
+    // 里的 hide() 打在尚未显示的窗口上是空操作，只有这里拦住才算真藏住。
+    if (!desiredVisible) {
+      log.info('宠物窗口按启动意图保持隐藏（不显示）')
+      return
+    }
     win.showInactive()
     log.info('宠物窗口已显示', `位置 ${drop.x},${drop.y}`, `尺寸 ${width}x${height}`)
   })
@@ -138,6 +159,9 @@ export function resizePetWindow(canvas?: { w: number; h: number }): void {
 }
 
 export function setPetVisible(visible: boolean): void {
+  // 先落意图再看窗口：窗口还没到 `ready-to-show` 时（启动即隐藏 / 开机静默 / 沉浸让路
+  // 全都发生在这个窗口期），下面两个分支都是空操作，只有这句意图能拦住 ready-to-show 的露面。
+  desiredVisible = visible
   const win = getPetWindow()
   if (!win) return
   if (visible) {

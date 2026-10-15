@@ -12,6 +12,13 @@ import type {
 } from '../shared/types/pet'
 import type { AppSettings } from '../shared/types/settings'
 import type { ClipboardStatus } from '../shared/types/clipboard'
+import type {
+  StickyDraft,
+  StickyPatch,
+  TodoDraft,
+  TodoPatch,
+  TodoSnapshot
+} from '../shared/types/todo'
 
 /** 订阅辅助：统一返回取消订阅函数，组件卸载时必须调用，否则窗口重载会累积监听 */
 function subscribe<T>(channel: string, callback: (payload: T) => void): () => void {
@@ -78,6 +85,25 @@ const api: PetApi = {
     beginHotkeyRecording: () => ipcRenderer.invoke(IPC.CLIPBOARD_BEGIN_RECORDING),
     endHotkeyRecording: (newHotkey: string | null) =>
       ipcRenderer.invoke(IPC.CLIPBOARD_END_RECORDING, newHotkey)
+  },
+
+  todo: {
+    snapshot: () => ipcRenderer.invoke(IPC.TODO_SNAPSHOT),
+    add: (draft: TodoDraft) => ipcRenderer.invoke(IPC.TODO_ADD, draft),
+    update: (id: string, patch: TodoPatch) => ipcRenderer.invoke(IPC.TODO_UPDATE, { id, patch }),
+    remove: (id: string) => ipcRenderer.invoke(IPC.TODO_REMOVE, id),
+    setDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.TODO_SET_DONE, { id, done }),
+    reorder: (ids: string[]) => ipcRenderer.invoke(IPC.TODO_REORDER, ids),
+    clearDone: () => ipcRenderer.invoke(IPC.TODO_CLEAR_DONE),
+    addNote: (draft: StickyDraft) => ipcRenderer.invoke(IPC.TODO_NOTE_ADD, draft),
+    updateNote: (id: string, patch: StickyPatch) =>
+      ipcRenderer.invoke(IPC.TODO_NOTE_UPDATE, { id, patch }),
+    removeNote: (id: string) => ipcRenderer.invoke(IPC.TODO_NOTE_REMOVE, id),
+    toggleNotePin: (id: string) => ipcRenderer.invoke(IPC.TODO_NOTE_TOGGLE_PIN, id),
+    onChanged: (cb) => subscribe<TodoSnapshot>(IPC.TODO_CHANGED, cb),
+    openPanel: (focusQuickAdd = false) =>
+      ipcRenderer.send(IPC.TODO_OPEN_PANEL, { focusQuickAdd }),
+    onFocusQuickAdd: (cb) => subscribe<void>(IPC.TODO_PANEL_FOCUS_QUICK_ADD, () => cb())
   }
 }
 

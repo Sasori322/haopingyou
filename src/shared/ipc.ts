@@ -117,7 +117,32 @@ export const IPC = {
    *  - 参数是 null / 空串 → 取消，恢复旧值
    * 与 `begin-recording` 严格配对；不在 begin 之前调用是 noop。
    */
-  CLIPBOARD_END_RECORDING: 'clipboard:end-recording'
+  CLIPBOARD_END_RECORDING: 'clipboard:end-recording',
+
+  // ---- 待办与便签 ----
+  /**
+   * 取全量快照（todos + notes + stats）。
+   * 写操作也一律返回同一份快照，渲染层不必"改完再读一次"。
+   */
+  TODO_SNAPSHOT: 'todo:snapshot',
+  TODO_ADD: 'todo:add',
+  TODO_UPDATE: 'todo:update',
+  TODO_REMOVE: 'todo:remove',
+  TODO_SET_DONE: 'todo:set-done',
+  /** 重排"进行中"列表（拖拽结束后调一次，传完整的新顺序） */
+  TODO_REORDER: 'todo:reorder',
+  /** 清空所有已完成条目 */
+  TODO_CLEAR_DONE: 'todo:clear-done',
+  TODO_NOTE_ADD: 'todo:note-add',
+  TODO_NOTE_UPDATE: 'todo:note-update',
+  TODO_NOTE_REMOVE: 'todo:note-remove',
+  TODO_NOTE_TOGGLE_PIN: 'todo:note-toggle-pin',
+  /** 主进程 → 所有窗口：待办/便签数据变了（另一个窗口改的，或截止提醒改了标记） */
+  TODO_CHANGED: 'todo:changed',
+  /** 打开（或切换）旁挂小面板窗口 */
+  TODO_OPEN_PANEL: 'todo:open-panel',
+  /** 主进程 → 面板窗口：把光标落到快速录入框（宠物右键「记一条待办」用） */
+  TODO_PANEL_FOCUS_QUICK_ADD: 'todo:panel-focus-quick-add'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

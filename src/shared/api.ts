@@ -12,6 +12,13 @@ import type {
 import type { ReminderStatus } from './types/reminder'
 import type { AppSettings } from './types/settings'
 import type { ClipboardEntry, ClipboardStatus } from './types/clipboard'
+import type {
+  StickyDraft,
+  StickyPatch,
+  TodoDraft,
+  TodoPatch,
+  TodoSnapshot
+} from './types/todo'
 import type { MenuKind } from './ipc'
 
 /**
@@ -119,5 +126,35 @@ export interface PetApi {
    * 与 `beginHotkeyRecording` 严格配对；没 begin 就 end 是 noop，安全。
    */
   endHotkeyRecording(newHotkey: string | null): Promise<void>
+  }
+
+  /**
+   * 待办与便签。
+   *
+   * 写操作**一律返回最新快照**，渲染层不必"改完再读一遍"——也就不会出现
+   * "点了完成但画面上还是未完成"的中间态。
+   * `onChanged` 只用于**另一个窗口**改了数据时同步（设置页与旁挂小面板会同时开着）。
+   */
+  todo: {
+    snapshot(): Promise<TodoSnapshot>
+    add(draft: TodoDraft): Promise<TodoSnapshot>
+    update(id: string, patch: TodoPatch): Promise<TodoSnapshot>
+    remove(id: string): Promise<TodoSnapshot>
+    setDone(id: string, done: boolean): Promise<TodoSnapshot>
+    /** 传"进行中列表"的完整新顺序（id 数组）；不在数组里的条目次序不受影响 */
+    reorder(ids: string[]): Promise<TodoSnapshot>
+    clearDone(): Promise<TodoSnapshot>
+    addNote(draft: StickyDraft): Promise<TodoSnapshot>
+    updateNote(id: string, patch: StickyPatch): Promise<TodoSnapshot>
+    removeNote(id: string): Promise<TodoSnapshot>
+    toggleNotePin(id: string): Promise<TodoSnapshot>
+    onChanged(cb: (snapshot: TodoSnapshot) => void): () => void
+    /**
+     * 打开旁挂小面板（已开则聚焦）。
+     * `focusQuickAdd = true` 时把光标落到快速录入框 —— 宠物右键的「记一条待办」走这条。
+     */
+    openPanel(focusQuickAdd?: boolean): void
+    /** 面板窗口专用：主进程要求把光标落到快速录入框 */
+    onFocusQuickAdd(cb: () => void): () => void
   }
 }

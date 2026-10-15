@@ -6,6 +6,24 @@ import { IPC } from '../../shared/ipc'
 import type { PetState } from '../../shared/types/pet'
 import type { AppSettings } from '../../shared/types/settings'
 import {
+  NOTE_TEXT_MAX,
+  STICKY_COLORS,
+  TODO_DUE_MAX,
+  TODO_DUE_MIN,
+  TODO_PRIORITIES,
+  TODO_TAGS_MAX,
+  TODO_TAG_MAX,
+  TODO_TITLE_MAX
+} from '../../shared/types/todo'
+import type {
+  StickyColor,
+  StickyDraft,
+  StickyPatch,
+  TodoDraft,
+  TodoPatch,
+  TodoPriority
+} from '../../shared/types/todo'
+import {
   clearClipboard,
   clipboardStatus,
   deleteClipboard,
@@ -28,9 +46,12 @@ import {
 } from '../clipboard/clipboardHotkey'
 import { petApp } from '../pet/petApp'
 import { listPetSummaries, toReloadPayload } from '../pet/petLibrary'
+import { initTodo, todoAfterWrite, todoRepo, todoSnapshot } from '../todo'
+import { todoReminder } from '../todo/todoReminder'
 import { getPetWindow, setPetVisible } from '../windows/petWindow'
 import { broadcast, openSettingsWindow } from '../windows/settingsWindow'
 import { openClipboardPanel, toggleClipboardPanel } from '../windows/clipboardWindow'
+import { openTodoPanel } from '../windows/todoPanelWindow'
 import { clamp } from '../utils/clamp'
 import { createLogger } from '../utils/logger'
 import { getAutostart, setAutostart } from './autostart'
@@ -76,6 +97,12 @@ function asState(value: unknown): PetState | null {
 function asString(value: unknown, maxLen = 200): string | null {
   return typeof value === 'string' && value.length <= maxLen ? value : null
 }
+
+/**
+ * 解析结果包装：用来表达"合法值是 null"与"输入不合法"的差别。
+ * 直接用裸 null 当哨兵会分不清这两种情形（截止时间字段合法地就可以是 null）。
+ */
+type Parsed<T> = { ok: true; value: T } | { ok: false }
 
 /**
  * 进程名单的字符集白名单。
@@ -131,6 +158,161 @@ function asKeywordList(value: unknown): string[] | null {
     if (unique.size >= 24) break
   }
   return [...unique]
+}
+
+// ---------------- 待办与便签 ----------------
+
+/** 标签字符集：字母数字、下划线、短横、中文。**不含空格与标点**，避免标签退化成一句话 */
+const TODO_TAG_PATTERN = /^[\w\-一-鿿]{1,16}$/u
+
+/**
+ * 待办标题。会进系统通知正文（`「标题」到截止时间了`），所以：
+ * ① 换行/制表符一律压成空格 —— 一个换行就能把通知正文的版式顶坏；
+ * ② 控制字符（≤0x1F、0x7F）直接删掉；
+ * ③ 首尾留白去掉，纯空白视为无效。
+ */
+function asTodoTitle(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (text.length === 0 || text.length > TODO_TITLE_MAX) return null
+  return text
+}
+
+/** 便签正文允许保留换行（便签就是要能分行的），只清掉换行以外的控制字符 */
+function asNoteText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim()
+  if (text.length === 0 || text.length > NOTE_TEXT_MAX) return null
+  return text
+}
+
+function asTodoPriority(value: unknown): TodoPriority | null {
+  return typeof value === 'string' && (TODO_PRIORITIES as readonly string[]).includes(value)
+    ? (value as TodoPriority)
+    : null
+}
+
+function asStickyColor(value: unknown): StickyColor | null {
+  return typeof value === 'string' && (STICKY_COLORS as readonly string[]).includes(value)
+    ? (value as StickyColor)
+    : null
+}
+
+/** 标签列表：逐条查模式、去重、封顶 TODO_TAGS_MAX 条。非数组 → null（调用方自行决定是"清空"还是"忽略"） */
+function asTodoTags(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const unique = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const tag = item.trim()
+    if (!TODO_TAG_PATTERN.test(tag)) continue
+    unique.add(tag.length > TODO_TAG_MAX ? tag.slice(0, TODO_TAG_MAX) : tag)
+    if (unique.size >= TODO_TAGS_MAX) break
+  }
+  return [...unique]
+}
+
+/**
+ * 截止时间。用 `Parsed` 包一层是因为这个字段**合法地可以是 null**（= 没有截止时间），
+ * 而其它非法输入也要被识别出来 —— 光看返回值区分不了"用户清空了截止时间"和"传了个垃圾进来"。
+ * 区间 2000–2100 用来挡住 0、NaN、2699 年这类脏值。
+ */
+function parseDueAt(value: unknown): Parsed<number | null> {
+  if (value === null || value === undefined) return { ok: true, value: null }
+  if (!isFiniteNumber(value)) return { ok: false }
+  if (value < TODO_DUE_MIN || value > TODO_DUE_MAX) return { ok: false }
+  return { ok: true, value: Math.round(value) }
+}
+
+function asTodoDraft(value: unknown): TodoDraft | null {
+  if (typeof value !== 'object' || value === null) return null
+  const input = value as Record<string, unknown>
+  const title = asTodoTitle(input.title)
+  if (title === null) {
+    log.warn('待办被拒：标题为空或过长')
+    return null
+  }
+  const dueAt = parseDueAt(input.dueAt)
+  if (!dueAt.ok) {
+    log.warn('待办被拒：截止时间不合法', input.dueAt)
+    return null
+  }
+  return {
+    title,
+    priority: asTodoPriority(input.priority) ?? 'normal',
+    tags: asTodoTags(input.tags) ?? [],
+    dueAt: dueAt.value
+  }
+}
+
+/**
+ * 局部更新。
+ *
+ * ⚠️ 与 `sanitizeSettingsPatch` 的关键区别：这里**必须区分"字段没传"和"字段传了但非法"**。
+ * 没传 = 不改；传了非法 = 整条请求丢掉（`asTodoPatch` 返回 null）。
+ * 如果沿用设置那套"非法就跳过"，用户把标题清空再保存时会拿到一个"什么都没发生"的假成功。
+ *
+ * 返回 null 的所有情形都是"拒绝整条请求"；空对象 `{}` 是合法的 no-op。
+ */
+function asTodoPatch(value: unknown): TodoPatch | null {
+  if (typeof value !== 'object' || value === null) return null
+  const input = value as Record<string, unknown>
+  const patch: TodoPatch = {}
+  if (input.title !== undefined) {
+    const title = asTodoTitle(input.title)
+    if (title === null) {
+      log.warn('待办更新被拒：标题非法')
+      return null
+    }
+    patch.title = title
+  }
+  if (input.priority !== undefined) {
+    const priority = asTodoPriority(input.priority)
+    if (priority === null) return null
+    patch.priority = priority
+  }
+  if (input.tags !== undefined) {
+    const tags = asTodoTags(input.tags)
+    if (tags === null) return null
+    patch.tags = tags
+  }
+  if (input.dueAt !== undefined) {
+    const dueAt = parseDueAt(input.dueAt)
+    if (!dueAt.ok) return null
+    patch.dueAt = dueAt.value
+  }
+  return patch
+}
+
+function asStickyDraft(value: unknown): StickyDraft | null {
+  if (typeof value !== 'object' || value === null) return null
+  const input = value as Record<string, unknown>
+  const text = asNoteText(input.text)
+  if (text === null) {
+    log.warn('便签被拒：正文为空或过长')
+    return null
+  }
+  return { text, color: asStickyColor(input.color) ?? 'yellow' }
+}
+
+function asStickyPatch(value: unknown): StickyPatch | null {
+  if (typeof value !== 'object' || value === null) return null
+  const input = value as Record<string, unknown>
+  const patch: StickyPatch = {}
+  if (input.text !== undefined) {
+    const text = asNoteText(input.text)
+    if (text === null) return null
+    patch.text = text
+  }
+  if (input.color !== undefined) {
+    const color = asStickyColor(input.color)
+    if (color === null) return null
+    patch.color = color
+  }
+  return patch
 }
 
 /** 白名单式校验 settings:patch，未知键一律丢弃，数值一律夹紧到合理区间 */
@@ -509,5 +691,104 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.CLIPBOARD_END_RECORDING, (_event: IpcMainInvokeEvent, raw: unknown) => {
     const next = typeof raw === 'string' ? raw : null
     endHotkeyRecording(next)
+  })
+
+  // ---------- 待办与便签 ----------
+  // 约定：写操作一律返回最新快照（渲染层不用"改完再读一次"），广播是为了
+  // 同步**另一个窗口**（设置页与旁挂小面板经常同时开着）。
+  // 入参不合法时不抛错，回一份未改动的快照 —— 让 UI 的"没生效"是可见的，
+  // 而不是一个被吞掉的异常。
+  initTodo()
+
+  ipcMain.handle(IPC.TODO_SNAPSHOT, () => todoSnapshot())
+
+  ipcMain.handle(IPC.TODO_ADD, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const draft = asTodoDraft(raw)
+    if (draft === null) return todoSnapshot()
+    todoRepo().addTodo(draft)
+    // 立刻评估一次：用户可能填的截止时间已经非常近（甚至就是当下）
+    todoReminder.refresh()
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_UPDATE, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const input = raw as { id?: unknown; patch?: unknown } | undefined
+    const id = asString(input?.id, 64)
+    const patch = asTodoPatch(input?.patch)
+    if (id === null || patch === null) return todoSnapshot()
+    todoRepo().updateTodo(id, patch)
+    // 改了截止时间 → 立刻重算（比如从"明天"改成"已经过了"，就应马上标记为已处理）
+    todoReminder.refresh()
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_REMOVE, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const id = asString(raw, 64)
+    if (id === null) return todoSnapshot()
+    todoRepo().removeTodo(id)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_SET_DONE, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const input = raw as { id?: unknown; done?: unknown } | undefined
+    const id = asString(input?.id, 64)
+    const done = asBool(input?.done)
+    if (id === null || done === null) return todoSnapshot()
+    todoRepo().setDone(id, done)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_REORDER, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    if (!Array.isArray(raw)) return todoSnapshot()
+    const ids: string[] = []
+    for (const item of raw) {
+      const id = asString(item, 64)
+      if (id !== null) ids.push(id)
+      if (ids.length >= 2000) break
+    }
+    todoRepo().reorderTodos(ids)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_CLEAR_DONE, () => {
+    todoRepo().clearDoneTodos()
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_ADD, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const draft = asStickyDraft(raw)
+    if (draft === null) return todoSnapshot()
+    todoRepo().addNote(draft)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_UPDATE, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const input = raw as { id?: unknown; patch?: unknown } | undefined
+    const id = asString(input?.id, 64)
+    const patch = asStickyPatch(input?.patch)
+    if (id === null || patch === null) return todoSnapshot()
+    todoRepo().updateNote(id, patch)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_REMOVE, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const id = asString(raw, 64)
+    if (id === null) return todoSnapshot()
+    todoRepo().removeNote(id)
+    return todoAfterWrite()
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_TOGGLE_PIN, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const id = asString(raw, 64)
+    if (id === null) return todoSnapshot()
+    const note = todoRepo().listNotes().find((n) => n.id === id)
+    if (note) todoRepo().setNotePinned(id, !note.pinned)
+    return todoAfterWrite()
+  })
+
+  // 打开旁挂面板；focusQuickAdd 只由「宠物右键 → 记一条待办」使用
+  ipcMain.on(IPC.TODO_OPEN_PANEL, (_event: IpcMainEvent, raw: unknown) => {
+    const input = raw as { focusQuickAdd?: unknown } | undefined
+    openTodoPanel({ focusQuickAdd: asBool(input?.focusQuickAdd) === true })
   })
 }
