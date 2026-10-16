@@ -1,12 +1,12 @@
 import { app, powerMonitor, screen, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
-import { APP_ID } from '../shared/constants'
+import { APP_ID, isReminderKind } from '../shared/constants'
 import type { PetState } from '../shared/types/pet'
 import type { StickyColor } from '../shared/types/todo'
 import { STICKY_COLORS } from '../shared/types/todo'
 import { registerClipboardSchemes, flushClipboard } from './clipboard'
-import { unregisterAllHotkeys } from './services/globalHotkeys'
+import { fireHotkey, unregisterAllHotkeys } from './services/globalHotkeys'
 import { petApp } from './pet/petApp'
 import { builtinPetsRoot, getPet, userPetsRoot } from './pet/petLibrary'
 import { handlePetAssetProtocol, registerPetAssetScheme } from './services/assetProtocol'
@@ -151,6 +151,7 @@ function onReady(): void {
   maybeCaptureSettingsWindow()
   maybeCaptureTodoPanel()
   maybeCaptureNoteWindow()
+  maybeFireHotkey()
   maybeVerifyPointerBridge()
 
   watchDisplayAndPower()
@@ -199,11 +200,14 @@ function maybeForceState(): void {
  * 用途：Windows 上透明窗口最典型的失败模式就是「白底 / 灰色矩形轮廓」，
  * 这条自检能在不开 DevTools（DevTools 会破坏透明）的前提下验证透明是否成立。
  *
- * 验证**气泡版式**时配两个参数（与 `HPY_CAPTURE_SETTINGS_WAIT` 对称）：
+ * 验证**气泡版式**时配三个参数（与 `HPY_CAPTURE_SETTINGS_WAIT` 对称）：
  * - `HPY_CAPTURE_PET_WAIT_MS`：等多久再截（默认 1500）；
- * - `HPY_SPEAK=<台词>`：截图前先让宠物把这句话说出来。
- * 气泡只存在 3200ms（`petApp.speak` 里的 `ms`），等提醒自己触发就得掐着秒表碰运气，
- * 所以给了个"直接说一句"的入口。
+ * - `HPY_SPEAK=<台词>`：截图前先让宠物把这句话说出来；
+ * - `HPY_SPEAK_REASON=<提醒类型>`：把这句话按**提醒**投出去（彩色卡片 + 宠物动作 + 8 秒）。
+ *   不传则 reason=`debug`，走普通白气泡。
+ *
+ * 气泡存在 3.2 秒（普通台词）或 8 秒（提醒），等提醒自己触发就得掐着 45 分钟的表碰运气，
+ * 所以给了"直接说一句"的入口。
  */
 function maybeCapturePetWindow(win: BrowserWindow): void {
   const target = process.env['HPY_CAPTURE_PET']
@@ -219,7 +223,12 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
       // 早于此刻发的 IPC 会掉进空气里（气泡不出现，还看不出为什么）。
       const line = process.env['HPY_SPEAK']
       if (line) {
-        log.info(`[截图] 让宠物说：${line} → ${petApp.speak('debug', line)}`)
+        // `HPY_SPEAK_REASON=water` 时按**提醒**投出来（彩色卡片 + 宠物动作 + 8 秒）。
+        // 没有这个的话只能说出普通台词，提醒那一路的样式在截图里根本验不到 ——
+        // 而等真实提醒自己触发要掐着 45 分钟的表，不现实。
+        const wanted = process.env['HPY_SPEAK_REASON']
+        const reason = isReminderKind(wanted) ? wanted : 'debug'
+        log.info(`[截图] 让宠物说（reason=${reason}）：${line} → ${petApp.speak(reason, line)}`)
       }
       const diagnostic = `(async () => {
         // 气泡有 0.18s 入场动画（scale 0.9 → 1），量得太早 getBoundingClientRect 会偏小，
@@ -231,6 +240,8 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
         const gazeEl = document.querySelector('.pet-gaze')
         const bubbleEl = document.querySelector('.bubble')
         const stageEl = document.querySelector('.pet-stage')
+        // 提醒气泡的三个识别特征（颜色 / 图标 / 宠物动作），全部取实算值而不是看类名
+        const iconEl = document.querySelector('.bubble__icon')
         let painted = 'n/a'
         if (cv) {
           try {
@@ -272,6 +283,12 @@ function maybeCapturePetWindow(win: BrowserWindow): void {
           bubbleFont: bubbleEl ? getComputedStyle(bubbleEl).fontSize : null,
           // 气泡若落在被缩放的 stage 里就说明「字跟着宠物缩」的毛病回来了
           bubbleInsideScaledStage: bubbleEl ? !!bubbleEl.closest('.pet-stage') : null,
+          // 提醒气泡：类名 / 图标段数 / 实算主色 / 底色 / 宠物动作是否挂上
+          bubbleKind: bubbleEl ? (bubbleEl.classList.contains('bubble--reminder') ? 'reminder' : 'plain') : null,
+          bubbleIconPaths: iconEl ? iconEl.querySelectorAll('path').length : null,
+          bubbleAccent: bubbleEl ? getComputedStyle(bubbleEl).getPropertyValue('--bubble-accent').trim() : null,
+          bubbleBg: bubbleEl ? getComputedStyle(bubbleEl).backgroundColor : null,
+          petMotionOn: !!document.querySelector('.pet-motion[data-motion="remind"]'),
           stageScale: stageEl ? getComputedStyle(stageEl).transform : 'MISSING',
           gazeWrap: gazeEl ? gazeEl.style.transform : 'MISSING',
           sheetTransform: cv ? cv.style.transform : 'MISSING',
@@ -567,6 +584,43 @@ function maybeCaptureNoteWindow(): void {
         })
     }, 900)
   })
+}
+
+/**
+ * 开发期诊断：设置 `HPY_FIRE_HOTKEY=<clipboard|todo|note>` 时，手动触发一次该槽位的回调。
+ *
+ * 用法：Windows 上没法从脚本里发一次**真实的**全局按键（`Add-Type` / `WScript.Shell`
+ * 都被安全策略拦住），所以"按下这把键到底会发生什么"只能拆成两半分别证明：
+ *  - `.tmp/hotkey-probe.cjs` 在实例运行时探测 → 报 `TAKEN` 就说明系统层面这把键
+ *    确实被本应用握住了（**必须带一个没用的组合当对照组**，否则 TAKEN 可能来自别的软件）；
+ *  - 本钩子 → 证明槽位里存的回调是**对的那个**（别把便签的键接到待办面板回调上）。
+ *
+ * ⚠️ `note` 槽位的回调会**真的新建一张便签**。所以这里记下触发前的便签 id 集合，
+ * 触发后把新增的那些删掉 —— 用户数据不留任何痕迹（与 `HPY_CAPTURE_NOTE` 同一原则）。
+ */
+function maybeFireHotkey(): void {
+  const raw = process.env['HPY_FIRE_HOTKEY']
+  if (!raw) return
+  const slot = raw.trim()
+  if (slot !== 'clipboard' && slot !== 'todo' && slot !== 'note') {
+    log.warn(`HPY_FIRE_HOTKEY 只接受 clipboard / todo / note，收到：${raw}`)
+    app.quit()
+    return
+  }
+
+  const before = new Set(todoRepo().listNotes().map((note) => note.id))
+  const fired = fireHotkey(slot)
+  const created = todoRepo()
+    .listNotes()
+    .filter((note) => !before.has(note.id))
+  for (const note of created) todoRepo().removeNote(note.id)
+  if (created.length > 0) syncDesktopNotes()
+
+  log.info(
+    `[自检] 手动触发 ${slot} 槽位：${fired ? '已触发' : '该槽位未注册（键为空或注册失败）'}` +
+      `，新建便签 ${created.map((note) => note.id).join(', ') || '无'}（已清理）`
+  )
+  setTimeout(() => app.quit(), 600)
 }
 
 /**

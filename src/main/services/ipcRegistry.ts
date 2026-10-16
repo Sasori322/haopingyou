@@ -52,7 +52,7 @@ import { todoReminder } from '../todo/todoReminder'
 import { getPetWindow, setPetVisible } from '../windows/petWindow'
 import { broadcast, openSettingsWindow } from '../windows/settingsWindow'
 import { openClipboardPanel, toggleClipboardPanel } from '../windows/clipboardWindow'
-import { syncDesktopNotes } from '../notes'
+import { createNoteOnDesktop, syncDesktopNotes } from '../notes'
 import { openTodoPanel, toggleTodoPanel } from '../windows/todoPanelWindow'
 import { clamp } from '../utils/clamp'
 import { createLogger } from '../utils/logger'
@@ -65,6 +65,20 @@ import { getSettings, patchSettings } from './settingsService'
 import { popupPetMenu, refreshTray } from './tray'
 
 const log = createLogger('ipc')
+
+/**
+ * 便签快捷键要做的事：新建一张空白便签、贴到桌面、光标落进正文。
+ *
+ * 与托盘「便签 → 记一条便签」、宠物右键「记一条便签…」是**同一个函数**，
+ * 三个入口行为一致（差别只在有没有把光标送进去，快捷键这条路要聚焦）。
+ *
+ * 必须是**模块级稳定引用**：`setHotkey` 用 `hotkey 没变 && callback 还是那个` 来判定
+ * "不必重新注册"，每次现搓一个箭头函数会让它每跑一次 `applySideEffects` 就
+ * unregister + register 一轮（万一那一瞬间被别的程序抢走，键就悄悄没了）。
+ */
+function createNoteFromHotkey(): void {
+  createNoteOnDesktop()
+}
 
 const PET_STATES: readonly PetState[] = [
   'idle',
@@ -510,18 +524,21 @@ function sanitizeSettingsPatch(raw: unknown): Partial<AppSettings> {
     if (Object.keys(next).length > 0) out.clipboard = next as AppSettings['clipboard']
   }
 
-  // 待办与便签：目前只有"打开面板的全局快捷键"一项，校验口径与剪贴板那处**逐字相同**。
+  // 待办与便签：两项都是"全局快捷键"，校验口径与剪贴板那处**逐字相同**。
   // 数据本身（待办 / 便签正文）不走设置层，所以这里天然不会碰到业务内容。
   const todo = input.todo as Record<string, unknown> | undefined
   if (todo && typeof todo === 'object') {
     const next: Partial<AppSettings['todo']> = {}
-    const hotkeyRaw = todo.hotkey
-    if (hotkeyRaw !== undefined && typeof hotkeyRaw === 'string') {
-      const text = hotkeyRaw.trim()
+    // 两个字段的规则一模一样，只有键名不同（面板热键 / 便签热键），所以并在一起过一遍，
+    // 免得将来只改了其中一个、另一个悄悄漂移。
+    for (const key of ['hotkey', 'noteHotkey'] as const) {
+      const raw = todo[key]
+      if (raw === undefined || typeof raw !== 'string') continue
+      const text = raw.trim()
       if (text === '') {
-        next.hotkey = ''
+        next[key] = ''
       } else if (text.length <= 64 && validateHotkeyFormat(text).ok) {
-        next.hotkey = text
+        next[key] = text
       }
     }
     if (Object.keys(next).length > 0) out.todo = next as AppSettings['todo']
@@ -549,6 +566,8 @@ function applySideEffects(settings: AppSettings): void {
   setHotkey('clipboard', settings.clipboard.hotkey, toggleClipboardPanel)
   // 待办面板的快捷键同样来自设置，改完要立刻生效（否则得重启才认新键）
   setHotkey('todo', settings.todo.hotkey, toggleTodoPanel)
+  // 便签快捷键（按一下多一张便签）也是设置项，同样改完立刻生效
+  setHotkey('note', settings.todo.noteHotkey, createNoteFromHotkey)
   refreshClipboardWatcher()   // 热更新由 store 重启触发
   refreshTray()
 }
@@ -768,6 +787,25 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.TODO_END_RECORDING, (_event: IpcMainInvokeEvent, raw: unknown) => {
     const next = typeof raw === 'string' ? raw : null
     endHotkeyRecording('todo', next)
+  })
+
+  // 便签快捷键：第三套三件套，挂在 `note` 槽位上。
+  // 三个槽位各存各的挂起态，所以录制便签的键时，剪贴板与待办那两把照常可用。
+  setHotkey('note', getSettings().todo.noteHotkey, createNoteFromHotkey)
+
+  ipcMain.handle(IPC.TODO_NOTE_TRY_HOTKEY, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const hotkey = asString(raw, 64)
+    if (hotkey === null) return { ok: false, reason: '快捷键不合法' }
+    return tryHotkey(hotkey)
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_BEGIN_RECORDING, () => {
+    suspendHotkeyForRecording('note')
+  })
+
+  ipcMain.handle(IPC.TODO_NOTE_END_RECORDING, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const next = typeof raw === 'string' ? raw : null
+    endHotkeyRecording('note', next)
   })
 
   ipcMain.handle(IPC.TODO_SNAPSHOT, () => todoSnapshot())

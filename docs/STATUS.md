@@ -41,6 +41,7 @@ Electron 44 + Vue 3 + TypeScript，electron-vite 构建，仅 Windows。
 | 素材缺失兜底 | ✅ | `hasAssets=false` 时回退内置 SVG 占位形象；加载失败也回退（桌面上宁可丑一点，不能空掉） |
 | **气泡（宠物说的话）不参与缩放** | ✅ | 字号固定 **14px DIP**，与宠物调到多小无关。`.pet-stage` 整层套了 `scale(var(--pet-scale))`，所以气泡**刻意放在它外面**（`.bubble-anchor` 与 stage 平级）——留在里面就会跟着宠物一起缩。纵向用 `bottom` 定位、按**当前姿态 `bounds` 的顶边**贴着头顶走（用 `bottom` 而不是 `top`，否则气泡折行数一变就得先量高度再回算，首帧会先落在宠物脸上再弹上去）；头顶空间不够时（拎起来那族占窗高 90%）顶边夹在 2px，**宁可与宠物重叠，也不让窗口裁掉半行字**。<br>2026-10-15 修复：此前气泡在 stage 内，宠物调到 75% 时 12px 的字实际只剩 9px。顺手修掉一个连带缺陷——原来 `.bubble` 自己是 `position:absolute; left:50%`，可用宽度只剩窗口的一半（220→110），`max-width:200px` 形同虚设、长句提前折行；改成由 `.bubble-anchor` 横向铺满 + flex 居中后，`max-width` 才真正生效 |
 | **台词库（每只 102 句）** | ✅ | `manifest.bubbles` 按触发原因分 14 组，**提醒类 key 与 `ReminderKind` 同名**（`sedentary` / `water` / `todo` / `pomodoro`），投递层 `speak(kind)` 直接命中——宠物说自己的话**零代码改动**，整组缺失才回落到 `petApp.ts` 的 `DEFAULT_BUBBLES`（95 句，供自建素材的用户）。2026-10-15 从每类 2~4 句扩到 6~10 句：`speak()` 只避开「上一句」，池子太小会听出复读机循环；三只各有性格（橘子憨、小可傲娇、麻薯元气），单句 ≤16 字符（气泡 `max-width:200px` / 14px 字号 ≈ 两行）。`pomodoro` 那组是给尚未接线的番茄钟预留的 |
+| **提醒气泡 ≠ 闲聊气泡** | ✅ | **2026-10-16 反馈：久坐 / 喝水提醒"看起来就是小猫随便说了句话"，不会引起注意。**根因是提醒与闲聊**共用同一套气泡样式**——白底、无图标、3.2 秒消失，和「在的在的」在屏幕上没有任何区别，余光扫到也没理由回头看。现在提醒类自动获得三样东西，**渲染层按 `payload.reason` 分叉，不新增任何 IPC 字段、素材作者零改动**：① **彩色卡片 + 图标**（喝水蓝水滴 `#2b86f0` / 久坐橙行人 `#ef8a1e` / 番茄红时钟 `#e5484d` / 待办紫勾选框 `#7c56f0`，含描边、尾尖、外发光；定义在 `renderer/src/pet/core/reminderTone.ts`）；② **8 秒停留**（闲聊仍 3.2 秒，见下条）；③ **宠物本体跳一下**（纯 CSS `pet-hop`，1.1 秒，**任何宠物都成立**——提醒用的 `eat`/`rest` 姿态目前复用站立族帧，切了也看不出来，所以不靠新素材）。动效刻意做足：入场是过冲回正的弹跳 + 期间向外扩散 3 次的圆环（约 5.3 秒），因为"只上色"只有正面看才分得出，而 8 秒里的前 3 秒用户很可能根本没在看屏幕。<br>⚠️ 两个位置上的坑：`bubbleTone` **不能**写在 `.pet-gaze` 层（它的内联 `transform` 正被鼠标跟随驱动，CSS 动画会覆盖内联样式 → 宠物一提醒就停止跟光标），所以动作层夹在 `.pet-gaze` 与素材之间；连续两次提醒必须**先落 `false` 再 `nextTick` 翻 `true`**，否则 Vue 认为属性没变化、CSS 动画不重播（表现为"第二次提醒宠物不动了"） |
 
 #### 跨姿态尺度校准（暹罗猫这轮的经验，下次出新宠物直接照做）
 
@@ -185,6 +186,12 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
 ### 3. 已知缺口（不是新功能，但更该先补）
 
 - **宠物位置不持久化**：重启后回到主屏右下角，也没有"回地面"的快捷入口。
+- **新装默认 50% 大小（`PET_SCALE_DEFAULT = 0.5`，2026-10-16 定）**：新用户第一次见到宠物时，
+  它应该是个"在边角上待着的小家伙"，而不是占掉桌上一大块的主角（觉得小，自己在设置页往后拖即可）。
+  ⚠️ 这个数有四个读者 —— `DEFAULT_SETTINGS.petScale`（真默认值）、设置页读值的兜底、
+  宠物窗口 `petScale` ref 的初值 —— **统一引用 `PET_SCALE_DEFAULT`**，别再各写一个 `1` / `0.5` 字面量：
+  设置是异步到达渲染层的，初值偏大的话宠物会先按满尺寸渲染一帧再缩回去，看着就是"闪一下大的"。
+  老配置不受影响（`JsonStore` 只在**字段缺失**时补默认值，用户自己调过的值原样保留）。
 - **宠物缩放上限就是 100%（`PET_SCALE_MAX = 1`）**：窗口尺寸按 `canvas + 20` 固定推算，**不随缩放放大**，
   而悬空挣扎那族最高（站立姿的 1.43 倍），所以放开到 1 以上时最先顶出窗口的就是它——
   表现为「拎起来的瞬间爪子/尾巴尖被窗口边缘切掉」。已在设置页滑块与主进程校验两处都夹到 `[0.5, 1]`，
@@ -204,6 +211,13 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
 ### 4. 打包发布（M4）
 
 - NSIS / portable 实机验证；图标（已生成 `build/icon.ico` 16–256 多尺寸）与 SmartScreen 提示说明。
+- **排除清单认的是项目根，不读 `.gitignore`**：`electron-builder.yml` 的 `files` 必须显式列掉本机杂物，
+  否则它们会被原样装进 `app.asar`。
+  ⚠️ 2026-10-16 实测踩到：`.tmp/`（调试截图 / 调试日志 / 落盘备份）曾**整个进包** —— `app.asar` 从 ~6MB 涨到
+  **197MB**（安装目录 567MB），并把 `settings*` / `todo*` 的备份一起发给了用户。
+  程序**不会加载**它们（只读写 `userData`），但文件实体就躺在别人机器的安装目录里，解包即可读。
+  补 `!.tmp/*` 后 `app.asar` 回到 **5.2MB**、安装目录 **376MB**，包内搜个人数据字符串 0 命中。
+  **新增任何"只在本机有意义"的根目录临时区，都要同步进这份清单。**
 
 ---
 
@@ -238,12 +252,13 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
   ⚠️ **字符类只禁 Windows 文件名系统真不让的字符**——曾误把 `\ / :` 也写进禁止集，导致**任何合法 Windows 路径都过不了**且被静默丢弃（2026-10-15 上午修复）；不合法**永不默默丢**，分原因 `log.warn` + UI 显式报错。
   默认 null = 沿用 `<userData>/clipboard/`。切目录时**不自动迁移旧数据**（保留原目录作为备份，新目录接续采集）。
   切目录前 flush 旧 store，按需重建新 store + watcher；`clipboard-img://` 协议的目录起点跟 currentDir 走，不再写死 `<userData>`。
-- **全局快捷键可配置**：两个槽位 —— `clipboard.hotkey`（剪贴板面板）与 `todo.hotkey`（待办面板），Electron Accelerator 格式（`Ctrl+Shift+V` / `Ctrl+Alt+T` 等）；空串 = 禁用该快捷键，仅走托盘与宠物右键菜单入口。
+- **全局快捷键可配置**：三个槽位 —— `clipboard.hotkey`（剪贴板面板）、`todo.hotkey`（待办面板）与 `todo.noteHotkey`（新建一张桌面便签），Electron Accelerator 格式（`Ctrl+Shift+V` / `Ctrl+Alt+T` / `Ctrl+Alt+N` 等）；空串 = 禁用该快捷键，仅走托盘与宠物右键菜单入口。**对外显示一律写 `Ctrl`，不露 Electron 的 `CommandOrControl`**（2026-10-16，见「已完成 · 6」的 `formatHotkey()`）。
   校验分两路：`sanitizeSettingsPatch` 走 format 正则（白名单修饰键 + 按键字符集），UI 实时反馈走 `tryHotkey`（format + register-noop 试探，区分"格式不合法"与"已被其它应用占用"）。
-  注册/注销统一收口在 `services/globalHotkeys.ts`（`setHotkey(slot, …)` / `unregisterAllHotkeys()`），**按槽位分账**：录制待办键不会把剪贴板的键一起解绑（那两个是独立设置项），退出时一次清空全部槽位，避免散在多处的 `globalShortcut.unregister` 漂移。
+  注册/注销统一收口在 `services/globalHotkeys.ts`（`setHotkey(slot, …)` / `unregisterAllHotkeys()`），**按槽位分账**：录制便签键不会把剪贴板 / 待办那两把一起解绑（三个是独立设置项），退出时一次清空全部槽位，避免散在多处的 `globalShortcut.unregister` 漂移。
   before-quit 调 `unregisterAllHotkeys()`，不依赖 app 自己回收。
   ⚠️ 2026-10-15 由 `clipboard/clipboardHotkey.ts` 泛化而来（第二个消费者出现时就该做这件事）：调用点只有 4 处，剪贴板行为逐字不变，设置页截图与重构前一致。
-- **录制控件两个设置页共用**：`renderer/settings/components/HotkeyRecorder.vue`（键盘翻译用 `e.code` 认物理键、录制期 `beginHotkeyRecording` 挂起旧键、卸载兜底 `end(null)`）。剪贴板与待办各传自己槽位的三件套，UI 与文案只维护一份。
+  ⚠️ 传进 `setHotkey` 的 callback **必须是模块级稳定引用**：它用 `键没变 && callback 还是那一个` 判定"不必重注册"，每次现搓箭头函数会让 `applySideEffects` 每跑一次就 unregister + register 一轮（那一瞬间被别的程序抢走，键就悄悄没了）。
+- **录制控件三处共用**：`renderer/settings/components/HotkeyRecorder.vue`（键盘翻译用 `e.code` 认物理键、录制期 `beginHotkeyRecording` 挂起旧键、卸载兜底 `end(null)`）。剪贴板、待办面板、桌面便签各传自己槽位的三件套（后两个在同一页上，靠 `todo.noteHotkey` 这个**子对象**区分），UI 与文案只维护一份；「留空」那句说明各槽位退路不同，走 `emptyHint` prop 覆盖。
 
 ### 实机自检（2026-10-15）
 - `HPY_OPEN_SETTINGS=1 npm run dev` 输出：`/clipboard：标题「剪贴板历史」卡片 ["(无标题)","(无标题)","(无标题)","(无标题)"] 行 7 控件 0 正文 617 字`（第二轮：+1 卡片 +2 行，新增"存储目录"和"全局快捷键"两项）
@@ -339,12 +354,39 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
   窄窗里跟待办抢纵向空间、看一眼还要先切页签，反而把它最该有的样子弄丢了。现在便签是
   一张一个独立窗口（见下一节），面板回到只做一件事。连 `initialTab` 参数和 `_TAB` 自检参数都
   一并删干净了 —— 面板不再有页签，留着就是误导。
-- **全局快捷键唤起**（2026-10-15 追加）：`todo.hotkey`，默认 `CommandOrControl+Alt+T`，
+- **全局快捷键唤起**（2026-10-15 追加）：`todo.hotkey`，默认 `Ctrl+Alt+T`，
   在「待办与便签」设置页里录制（控件与剪贴板设置页共用，见「已完成 · 5」的 `HotkeyRecorder.vue`）。
   **为什么不用更顺手的 Ctrl+Shift+T**：那个组合在浏览器里是「恢复刚关掉的标签页」，
   全局注册会把它从**所有**应用手里抢走，用户只会以"浏览器坏了"的形式感知到；Alt 组合在
   Windows 上几乎没有系统级占用。留空 = 禁用（托盘 / 右键菜单 / 设置页入口照旧）。
   设置改完立即热生效（走 `applySideEffects` 重新注册），旧键同时被释放。
+- **对外一律写 `Ctrl`，不露 Electron 的 `CommandOrControl`**（2026-10-16）：
+  Electron 的标准写法是 `CommandOrControl+Alt+T`，本项目**只跑 Windows**，它在 Windows 上就是 Ctrl，
+  而那一长串摆在设置页输入框里对用户近乎乱码。所以显示层统一过 `renderer/common/hotkey.ts`
+  的 `formatHotkey()` —— Ctrl 家族（`CommandOrControl` / `CmdOrCtrl` / `Control`）一律写成 `Ctrl`、
+  修饰键按 `Ctrl→Alt→AltGr→Shift→Super` 固定顺序排在前，空串原样返回（未设置 / 已禁用），幂等。
+  几个刻意的点：
+  - **归一后的串本身仍是合法 Accelerator**（`services/globalHotkeys.ts` 的格式白名单里就含 `Ctrl`，
+    且整体大小写不敏感）。所以显示 / 保存 / 注册**三处共用同一个写法**，
+    不需要"显示时翻译、保存时翻回来"那层映射 —— 少一层映射就少一处写歪的机会。
+  - 老存档里的 `CommandOrControl+…` 照常注册（Electron 自己认），读出来经 `formatHotkey()` 归一即可，
+    **升级不用写迁移**；录制产出、手填的串、默认值也都走同一个归一。
+  - 三个默认值（`clipboard.hotkey` / `todo.hotkey` / `todo.noteHotkey`）随之从 `CommandOrControl+…`
+    改成 `Ctrl+…`，这样"存进去的"和"看见的"是同一串，不靠显示层兜。
+- **便签自己的快捷键**（2026-10-16，便签拆成独立窗口之后追加）：`todo.noteHotkey`，
+  默认 `Ctrl+Alt+N`，在「待办与便签」页的**便签卡片**上录制。
+  按下去的动作 = **新建一张空白便签 + 贴到桌面 + 光标落进正文**，与托盘「便签 → 记一条便签」、
+  宠物右键「记一条便签…」走的是**同一个函数**（`createNoteOnDesktop()`），三个入口行为一致。
+  几个刻意的地方：
+  - **它是第三个槽位，不是复用面板那把键**。两把键在同一页上，但各自记挂起态 ——
+    录制便签的键时面板的键照常可用，反之亦然（这正是 `services/globalHotkeys.ts` 一开始
+    就"按槽位分账"的收益；如果当年把两个槽位共用一组模块级变量，这里就得推倒重来）。
+  - **留空 = 禁用**，退路仍在（托盘 / 右键菜单）。文案由 `emptyHint` prop 覆盖，
+    不再复述"改为从托盘打开面板"那句面板专属的说法。
+  - 老 `settings.json` 里没有这个键，靠 `JsonStore` 的**递归默认值补齐**自动拿到默认组合
+    （实测：升级后第一次读到的就是默认值），不需要写迁移代码。
+  - 撞 `NOTE_DESKTOP_MAX`（24 张）时 `syncDesktopNotes()` 会把数据改回"不贴"并 warn ——
+    热键这条路也走同一个对账，不会出现"数据说贴着、桌面看不见"。
 
 ### 桌面便签：一张便签 = 一个独立窗口（2026-10-16）
 
@@ -427,7 +469,18 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
   截图、删掉。它走的是**真实入口** `createNoteOnDesktop()`（托盘「记一条便签」用的同一个函数），
   而不是在钩子里自己拼一遍 `addNote` —— 否则验的是一条只存在于钩子里的旁路。
   这张便签截完即删，**用户自己的便签一条都不动**（所以它不像面板的 `_EVAL` 那样需要 seed / restore）。
+- `HPY_SPEAK_REASON=<sedentary / water / pomodoro / todo>`（2026-10-16）—— 与 `HPY_SPEAK` 连用，
+  把台词按**提醒**投出去，拿到的是彩色卡片 + 宠物动作 + 8 秒时长。不传则 reason=`debug`，走普通白气泡。
+  **它和 `HPY_FAST_REMIND` 的分工**：`HPY_FAST_REMIND` 验的是"提醒真的会自己触发"（投递链路，
+  但等 20 秒且截到的台词随机、动作很可能已经播完）；这个钩子验的是"提醒长什么样"（样式与动作，
+  确定性地在 speak 后 320ms 采样，所以 `petMotionOn` 能捕到 `true`）。**两个都要跑**。
 - `HPY_CAPTURE_SETTINGS_WAIT=<选择器>`（等哪个标志物出现再截，默认 `.pet-card`）
+- `HPY_FIRE_HOTKEY=<clipboard / todo / note>`（2026-10-16）—— 手动触发一次该槽位的回调后退出。
+  Windows 上没法从脚本发一次**真实的**全局按键（`Add-Type` / `WScript.Shell` 都被安全策略拦住），
+  所以"按下去到底会发生什么"只能拆成两半分别证明：这个钩子证明**槽位里存的回调是对的那个**，
+  `.tmp/hotkey-probe.cjs` 在实例跑着时报 `TAKEN` 才证明**系统层面这把键真被本应用握住了**
+  （probe **必须带一个没用的组合当对照组**，否则 `TAKEN` 可能来自别的软件）。
+  ⚠️ `note` 槽位会真建一张便签，钩子触发后立刻删掉，用户数据不留痕迹。
 - `HPY_CAPTURE_SETTINGS_SCROLL=<选择器>`（截图前滚过去，页面长了以后下半部分截不到）
 - `HPY_CAPTURE_SETTINGS_EVAL=<js>`（**唯一能端到端验证"渲染层 → preload → IPC → 落盘 → 广播回渲染层"的手段**）
   ⚠️ 代码是**内联**进 `executeJavaScript` 的脚本里的，不是页面里调 `new Function`——
@@ -464,6 +517,17 @@ AI 生成 + 自写零依赖流水线；原素材放 `.workbuddy/artwork/<petId>/
 | 截止提醒投递 | ✅ `提醒已投递：todo · 橘子 · 待办到点了 ——「到点提醒验证」到截止时间了 · 宠物说「该收尾那件事啦」`，且**恰好投递 1 次**（不重复轰炸） |
 | 启动前已过期 | ✅ 静默标记：`待办启动前已过期，仅标记不打扰：三天前的旧账`，无通知 |
 | 落盘 | ✅ `notifiedForDueAt` 与各自 `dueAt` 相等；无 `.tmp` 残留（rename 成功） |
+
+便签快捷键（2026-10-16 追加，四段拼成一条完整链路）：
+
+| 验证项 | 结果 |
+|---|---|
+| 系统层面真的注册了 | ✅ 实例运行时 `electron .tmp/hotkey-probe.cjs`：`CommandOrControl+Alt+N` = **TAKEN**、`CommandOrControl+Alt+9`（用户自己改过的面板键）= TAKEN、对照组 `CommandOrControl+Shift+9` = **available** |
+| 槽位里的回调是对的 | ✅ `HPY_FIRE_HOTKEY=note` → `[自检] 手动触发 note 槽位：已触发，新建便签 n_mvaakljc_…（已清理）`，且日志里有 `桌面便签已从桌面移除`（说明便签窗口真开过） |
+| 自检不留痕迹 | ✅ 触发前后用户便签数 / 待办列表逐条一致（`便签残留? false`、`待办一致? true`） |
+| 设置页录制链路 | ✅ `_EVAL`：`freeProbe = {ok:true}`；`takenProbe / selfProbe = {ok:false, reason:"已被其它应用占用"}`（占用探测是真在工作）；`begin → end('Ctrl+Alt+J')` + patch 后读回 `noteHotkey = "CommandOrControl+Alt+J"` 且**面板键仍是 `CommandOrControl+Alt+9`**（两槽位互不干扰）；改回默认后 `restoredNote = "CommandOrControl+Alt+N"` |
+| 界面 | ✅ 便签卡片多出「新建便签的全局快捷键」一行（值 `CommandOrControl+Alt+N`），「留空」提示是便签专属文案，截图 `.tmp/cmp/settings-note-hotkey-row.png` |
+| 老配置自动补默认值 | ✅ 升级前 `settings.json` 的 `todo` 只有 `hotkey`，第一次读到的就是 `noteHotkey: "CommandOrControl+Alt+N"`（`JsonStore` 递归补齐），**不需要写迁移代码** |
 
 ---
 

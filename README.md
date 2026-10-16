@@ -22,6 +22,11 @@ npm run pack:dir       # 只解包成目录，快速验证打包
 npm run build:win      # NSIS 安装包 + portable（输出到 release/）
 ```
 
+> **发版前留意 `electron-builder.yml` 的排除清单**
+> 那份 `files` 排的是**项目根目录**下的东西，不是只排源码。electron-builder **不读 `.gitignore`**，
+> 所以凡是留在项目根的"本机杂物"都会被原样装进 `app.asar` —— `.tmp/`、`.workbuddy/` 已经在清单里。
+> 新增任何只在本机有意义的临时目录时，记得同步加进去。
+
 > **关于 `npm run dev` 的包装器**
 > 所有脚本都经由 `tools/electron-vite-run.mjs` 启动。原因：部分宿主环境会预设
 > `ELECTRON_RUN_AS_NODE`，而 Electron 只要看到这个变量存在（**哪怕值是空串**）就会退化成纯 Node 运行，
@@ -67,7 +72,7 @@ src/
 │  │  ├─ gazeWatcher.ts         鼠标跟随（60ms 采样全局光标，量化到 1/16 并去重后才发 IPC）
 │  │  ├─ foregroundProbe.ts     常驻 PowerShell 辅助进程：前台窗口矩形 + 名单进程命中
 │  │  ├─ immersiveWatcher.ts    沉浸检测（名单 / 全屏 / 手动安静），双向 1.5s 防抖
-│  │  ├─ globalHotkeys.ts       全局快捷键收口，按槽位分账（clipboard / todo）；format 校验 + register-noop 试探占用
+│  │  ├─ globalHotkeys.ts       全局快捷键收口，按槽位分账（clipboard / todo / note）；format 校验 + register-noop 试探占用
 │  │  ├─ reminderScheduler.ts   久坐 / 喝水提醒（存绝对时间戳，不用累加计时器）
 │  │  └─ notifier.ts            提醒投递层：优先宠物气泡，说不了才退回系统通知（托盘提示常伴）
 │  └─ utils/                    clamp / logger / paths / throttle
@@ -77,16 +82,18 @@ src/
 │  └─ src/
 │     ├─ common/todo-date.ts    待办时间展示（设置页与面板共用，保证"已过期"口径一致）
 │     ├─ common/note-skin.ts    便签纸色（同上，两处共用，避免配色漂移）
+│     ├─ common/hotkey.ts       快捷键对外写法收口（Ctrl 家族统一写 `Ctrl`，设置页与提示共用一串）
 │     ├─ pet/                   宠物窗口（轻量，不引 Element Plus）
 │     │  ├─ core/usePointerBridge.ts   ★ 两段式点击穿透的渲染层实现
 │     │  ├─ core/hitTest.ts            几何命中判定（按动画 bounds，含 petScale 与镜像）
 │     │  ├─ core/petAsset.ts           pet-asset:// → Image（crossOrigin=anonymous）
+│     │  ├─ core/reminderTone.ts       提醒气泡的配色与图标（一种提醒 = 一个颜色 + 一个图标）
 │     │  └─ components/
 │     │     ├─ PetSpriteSheet.vue      canvas 序列帧播放器（rAF 累积算帧号）
 │     │     ├─ PetSprite.vue           素材缺失时的内置 SVG 占位形象
-│     │     └─ Bubble.vue              气泡
+│     │     └─ Bubble.vue              气泡（普通白气泡 / 提醒彩色卡片两态）
 │     ├─ settings/              设置窗口（Vue Router hash + Pinia + Element Plus）
-│     │  └─ components/HotkeyRecorder.vue  全局快捷键录制控件（剪贴板 / 待办两个设置页共用）
+│     │  └─ components/HotkeyRecorder.vue  全局快捷键录制控件（剪贴板 / 待办与便签两页、共三把键共用）
 │     ├─ clipboard/             剪贴板历史面板（不引 Element Plus，纯 CSS + Vue，键盘导航）
 │     ├─ todo-panel/            旁挂待办面板（同上，纯 CSS + Vue）：只剩待办，常驻可见
 │     └─ notes/                 桌面便签（一张便签一个独立窗口；可以直接在上面写字、点顶上圆点换纸色）
@@ -188,7 +195,9 @@ resources/pets/cat/
   - 状态类：`idle` / `walk` / `sleep` / `eat` / `click` / `drag` / `drop` / `rest` / `hot` / `focus`
   - 提醒类：`sedentary`（久坐）/ `water`（喝水）/ `todo`（待办截止）/ `pomodoro`（番茄钟，功能尚未接线，台词先备好）
   提醒类的 key 与 `ReminderKind` 同名——投递层直接调 `speak(kind)`，所以素材只要写了自己的
-  `bubbles.water` 就能说自己的话，**一行代码都不用改**；整组缺失才回落到 `DEFAULT_BUBBLES`
+  `bubbles.water` 就能说自己的话，**一行代码都不用改**；整组缺失才回落到 `DEFAULT_BUBBLES`。
+  提醒类还会**自动**获得专属外观（彩色卡片 + 图标 + 宠物跳一下 + 8 秒停留），这是渲染层按
+  reason 分叉的，素材作者同样不需要做任何事
 - **每组不少于 6 句**：`speak()` 只避开「上一句」（`lastBubble`），池子小到 2~3 句就会听出复读机循环。
   内置三只各 102 句（橘子憨、小可傲娇、麻薯元气），兜底表 95 句给自建素材的用户用。
   单句控制在 **16 个字符以内**——气泡 `max-width: 200px`、14px 字号，约合两行；再长就把宠物盖住了
@@ -340,11 +349,12 @@ npm run icons:build   # → build/icon.png、build/icon.ico（16–256 多尺寸
 | **M2.5 鼠标跟随 + 沉浸躲开** | ✅ | 见 `docs/STATUS.md` 第二部分 |
 | **M3 久坐 / 喝水 / 投递层** | ✅ | 加速模式下出 7/7 实机自检。投递层 + 免打扰（丢弃不补发） + 沉浸挂起（补发最近一条） |
 | **M3.5 剪贴板历史** | ✅ | 2026-10-15：800ms 轮询 + 100/30 天 + pinned，clipboard-img:// 协议 + Ctrl+Shift+V 面板。**2026-10-15 二轮**：自定义存储目录（绝对路径校验）+ 自定义唤起快捷键（format + register-noop 试探，可禁用）。**2026-10-15 三轮**：录制热键（e.code 翻译物理键 + IPC suspend/resend 旧键避免误触）。`docs/STATUS.md` 第二部分"已完成 · 5"展开 |
-| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口）+ 宠物右键快速记一条 + 截止提醒（经投递层）+ **面板全局快捷键（可自定义，默认 Ctrl+Alt+T）**。<br>2026-10-16：**便签从面板里拆出来，改成"一张便签一个独立窗口"** —— 贴在桌面上、可以直接在上面写字、各自单独关掉；面板回到只放待办。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
+| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口）+ 宠物右键快速记一条 + 截止提醒（经投递层）+ **面板全局快捷键（可自定义，默认 Ctrl+Alt+T）**。<br>2026-10-16：**便签从面板里拆出来，改成"一张便签一个独立窗口"** —— 贴在桌面上、可以直接在上面写字、各自单独关掉；面板回到只放待办。**便签自己的全局快捷键（默认 Ctrl+Alt+N）＝ 按一下多一张空便签、光标直接落进正文**。2026-10-16 二轮：**快捷键在设置页统一显示成 `Ctrl+…`**（不再露出 Electron 的 `CommandOrControl`），显示 / 保存 / 注册共用同一个写法，老存档自动归一。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
 | M3.x 番茄钟 / 系统监控 | 待做 | 设置项齐全，逻辑未接 |
 | M4 打包发布 | 待办 | NSIS / portable 实机验证、图标、SmartScreen 说明 |
 
 设置窗口里番茄钟 / 监控的**设置项已可正常保存**，功能逻辑随后续里程碑补齐。
+新装默认**宠物大小为 50%**（`PET_SCALE_DEFAULT`）—— 想大一点，去设置页「通用 → 宠物大小」拖滑块。
 暹罗猫是新增的第三只宠物——`petLibrary` 是**扫目录**的，因此加宠物**零代码改动**：
 放对目录 + 写对 `manifest.json` 即自动出现在切换列表（`npm run assets:check` 显示 9/9 素材就绪）。
 
@@ -373,13 +383,15 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 | 变量 | 作用 |
 |---|---|
 | `HPY_CAPTURE_PET=<路径>` | 截图宠物窗口（保留 alpha）+ 跑一遍渲染层诊断脚本（DOM 结构 / 命中框 / 画布不透明像素数 / 气泡文本**与气泡字号·像素矩形** / 图片与 fetch 探测），导出 `*.canvas.png` 与 `*.diag.json` 后退出。**透明窗口最典型的失败模式是「截到空帧」，自检先看它**。配 `HPY_CAPTURE_PET_WAIT_MS` 推迟截图时刻（默认 1500）。诊断里的 `bubbleFont` / `bubbleRect` 是**跨缩放比对**用的：换个 `petScale` 再截一次，字号与高度必须一模一样，且 `bubbleInsideScaledStage` 必须为 `false` |
-| `HPY_SPEAK=<台词>` | 与 `HPY_CAPTURE_PET` 连用：截图前先让宠物把这句话说出来，用来**确定性**地拿到带气泡的截图。气泡只存在 3200ms，靠等提醒自己触发就得掐着秒表碰运气 |
+| `HPY_SPEAK=<台词>` | 与 `HPY_CAPTURE_PET` 连用：截图前先让宠物把这句话说出来，用来**确定性**地拿到带气泡的截图。气泡存在 3.2 秒（普通台词）/ 8 秒（提醒），靠等提醒自己触发就得掐着秒表碰运气 |
+| `HPY_SPEAK_REASON=<提醒类型>` | 与 `HPY_SPEAK` 连用：把这句台词按**提醒**投出去（`sedentary` / `water` / `pomodoro` / `todo`），拿到的是彩色提醒卡片 + 宠物动作 + 8 秒时长。不传则 reason=`debug`，走普通白气泡。**验提醒那套样式只能靠它**——等真实提醒自己触发要 45 分钟 |
 | `HPY_FORCE_STATE=<状态名>` | 把宠物**钉在指定状态**（每 200ms 重设一次，否则会被行为调度器抢走）。给姿态族做尺寸 / 观感裁定时用——窗口尺寸固定，逐族截图并排就是用户视角 |
 | `HPY_OPEN_SETTINGS=1` | 自动打开设置窗口、把渲染层 console 转发到主进程日志、逐个路由 dump DOM 证据后退出（设置页只能从托盘进，手工路径太长；而「页面空白」和「只是没数据」在日志里长得一样） |
 | `HPY_CAPTURE_SETTINGS=<路径>` | 打开设置窗口截图后退出。配 `_ROUTE=<hash 路由>` 直开某一页、`_WAIT=<选择器>` 等标志物出现再截、`_SCROLL=<选择器>` 先滚过去、`_EVAL=<js>` 在页面里跑一段代码——**这是唯一能端到端验证「渲染层 → preload → IPC → 落盘 → 广播回渲染层」的手段** |
 | `HPY_CAPTURE_TODO_PANEL=<路径>` | 打开旁挂面板截图后退出。配 `_FOCUS=1` 验「宠物右键 → 光标落到快速录入框」、`_EVAL=<js>` 在截图前再跑一段渲染层脚本（⚠️ 会真写数据，用 `.tmp/seed-notes.mjs` 兜底）。诊断结果里的 `tabs` 必须是 **0** —— 面板已无页签 |
 | `HPY_CAPTURE_NOTE=<路径>` | 临时贴一张便签、截图、删掉。走的是真实入口（托盘「记一条便签」用的同一个函数），**用户自己的便签不受影响**。配 `_TEXT` / `_COLOR` / `_FOCUS=1`（验光标自动落进正文）/ `_EVAL=<js>`（在便签自己的渲染层里跑，验「直接改字」或「点圆点换纸色」→ 落盘 → 读回）。诊断里的 `dots` / `activeDot` 是顶部色点是否渲染对、当前色是哪一个 |
 | `HPY_FAST_REMIND=1` | 把提醒阈值从分钟压到秒（久坐 20s / 喝水 25s / 离开判定 45s）。**三者的相对大小关系不能乱改**，否则加速模式自己就不可测了 |
+| `HPY_FIRE_HOTKEY=<clipboard / todo / note>` | 手动触发一次该槽位的回调后退出。**Windows 上没有任何办法从脚本里发一次真实的全局按键**（本机 `Add-Type` 与 `WScript.Shell` 都被安全策略拦住），所以「按下这把键会发生什么」只能拆成两半分别证明：本钩子证明**槽位里存的回调是对的那个**（别把便签的键接成待办面板），`.tmp/hotkey-probe.cjs` 在实例跑着时报 `TAKEN` 才证明**系统层面这把键真被本应用握住了**——用 probe 时**必须带一个没用的组合当对照组**，否则 `TAKEN` 可能来自别的软件。⚠️ `note` 槽位会真建一张便签，钩子触发后立刻删掉 |
 | `HPY_DEBUG_GAZE=1` | 打印鼠标跟随的采样日志（光标位置 / 观察原点 / 距离 / 量化后的方位） |
 | `HPY_DEBUG_POINTER=1` | 打印**穿透态的每次切换**（穿透 ↔ 可交互）。只在「进入 / 离开命中区」两个边沿触发，条数与鼠标行为同阶、不刷屏。**排查「宠物点不动 / 拖不动」先看它**：显示之后若一直停在「穿透」，就是两段式握手的回边断了 |
 | `HPY_VERIFY_POINTER=1` | 脚本化复现一次「藏 → 显」并打印穿透态轨迹后退出。它会**先把宠物挪到光标底下**（否则光标在窗口外，切回「穿透」与旧代码表现一样、测不出差别），再隐藏 1 秒重显，全程不产生任何真实 `mousemove`。正确表现是「显示（已重同步指针）」后紧跟一次 `穿透态 → 可交互` |

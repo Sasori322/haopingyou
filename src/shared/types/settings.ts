@@ -74,16 +74,23 @@ export interface ClipboardSettings {
 /**
  * 待办与便签（设置层）。
  *
- * 目前只有一项：打开旁挂面板的全局快捷键。数据本身不在设置里——
+ * 只有两项：待办面板的快捷键、便签的快捷键。数据本身不在设置里——
  * 待办 / 便签是**业务数据**，存在 `todo/todo.json`（不淘汰、不随设置重置）。
  */
 export interface TodoSettings {
   /**
-   * 打开 / 收起待办便签面板的全局快捷键（Electron Accelerator 格式）。
+   * 打开 / 收起待办面板的全局快捷键（Electron Accelerator 格式）。
    * - 空字符串 = 不使用全局快捷键，改为从托盘菜单 / 宠物右键菜单打开。
    * - 与 `clipboard.hotkey` 同一套校验（format 白名单 + register-noop 试探占用）。
    */
   hotkey: string
+  /**
+   * 「记一条便签」的全局快捷键：按一下就在桌面新建一张便签，光标直接落进正文。
+   *
+   * 与 `hotkey` 走同一套校验，但**是两个独立槽位**——录制其中一把键不会把另一把解绑。
+   * 空字符串 = 禁用（入口还在：托盘「便签 → 记一条便签」、宠物右键「记一条便签…」）。
+   */
+  noteHotkey: string
 }
 
 /** 鼠标跟随：宠物朝光标方向轻微倾斜 / 转头 */
@@ -123,8 +130,9 @@ export interface AppSettings {
   /** 宠物是否可见 */
   petVisible: boolean
   /**
-   * 宠物整体缩放。取值区间由 `PET_SCALE_MIN` / `PET_SCALE_MAX` 决定（上限 1）——
-   * 为什么封顶，见 `constants.ts` 里这两个常量的注释。
+   * 宠物整体缩放。取值区间由 `PET_SCALE_MIN` / `PET_SCALE_MAX` 决定（上限 1），
+   * **新装默认 `PET_SCALE_DEFAULT`（0.5）** —— 为什么封顶、为什么默认取最小值，
+   * 见 `constants.ts` 里这几个常量的注释。
    */
   petScale: number
   /** 是否始终置顶 */

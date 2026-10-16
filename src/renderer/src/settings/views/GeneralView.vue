@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { PET_SCALE_MAX, PET_SCALE_MIN } from '@shared/constants'
+import { PET_SCALE_DEFAULT, PET_SCALE_MAX, PET_SCALE_MIN } from '@shared/constants'
 import { useSettings } from '../composables/useSettings'
 
 const { settings, patch } = useSettings()
@@ -23,7 +23,8 @@ const reactToLoad = computed({
 })
 
 const petScale = computed({
-  get: () => settings.value?.petScale ?? 1,
+  // 兜底用 PET_SCALE_DEFAULT（不是 1）：设置还没读回来时，滑块应停在"新装默认值"上
+  get: () => settings.value?.petScale ?? PET_SCALE_DEFAULT,
   set: (value: number) => void patch({ petScale: value })
 })
 

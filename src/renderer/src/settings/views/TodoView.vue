@@ -173,12 +173,23 @@ function openPanel(): void {
  * 面板的全局快捷键。
  * 录制控件与剪贴板设置页是同一个组件（`components/HotkeyRecorder.vue`），
  * 这里只把「设置里的值」和「改完写回设置」接上。
+ *
+ * 便签那把键是**另一个槽位**（`todo.noteHotkey`）：按下去不是开面板，
+ * 而是新建一张便签贴到桌面并把光标送进正文。两把键各存各的挂起态，
+ * 所以录制其中一个时，另一个照常可用。
  */
 const todoApi = window.petAPI.todo
 const todoHotkey = computed(() => settings.value?.todo?.hotkey ?? '')
 
 function onHotkeyChange(value: string): void {
   void patch({ todo: { hotkey: value } })
+}
+
+const noteHotkeyApi = window.petAPI.todo.noteHotkey
+const noteHotkey = computed(() => settings.value?.todo?.noteHotkey ?? '')
+
+function onNoteHotkeyChange(value: string): void {
+  void patch({ todo: { noteHotkey: value } })
 }
 
 // ---------------- 编辑弹框 ----------------
@@ -330,7 +341,7 @@ onBeforeUnmount(() => {
       label="唤起面板的全局快捷键"
       :model-value="todoHotkey"
       :api="todoApi"
-      placeholder="CommandOrControl+Alt+T"
+      placeholder="Ctrl+Alt+T"
       @change="onHotkeyChange"
     />
   </el-card>
@@ -453,6 +464,15 @@ onBeforeUnmount(() => {
       便签
       <span class="section-count">{{ notes.length }}</span>
     </div>
+
+    <HotkeyRecorder
+      label="新建便签的全局快捷键"
+      :model-value="noteHotkey"
+      :api="noteHotkeyApi"
+      placeholder="Ctrl+Alt+N"
+      empty-hint="留空 = 不使用全局快捷键，改为从托盘「便签 → 记一条便签」创建。"
+      @change="onNoteHotkeyChange"
+    />
 
     <div class="create-row">
       <el-input

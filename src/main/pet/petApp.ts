@@ -1,6 +1,6 @@
 import { screen } from 'electron'
 import type { BrowserWindow } from 'electron'
-import { PRODUCT_NAME } from '../../shared/constants'
+import { isReminderKind, PRODUCT_NAME, REMINDER_BUBBLE_MS, SPEECH_BUBBLE_MS } from '../../shared/constants'
 import { IPC } from '../../shared/ipc'
 import type {
   ForceStatePayload,
@@ -423,7 +423,14 @@ export class PetApp {
     const picked = candidates[Math.floor(Math.random() * candidates.length)]
     if (!picked) return null
     this.lastBubble = picked
-    const payload: SpeakPayload = { text: picked, ms: 3200, reason }
+    // 提醒说久一点（8 秒 vs 闲聊 3.2 秒）。这不是"更显眼一点"的调参，而是功能需要：
+    // 提醒的目的是让用户**离开当前窗口去做别的事**，而闲聊只需要被余光扫到。
+    // 时长、配色、宠物动作三件事都在渲染层按同一个 `reason` 分叉，这里是唯一给出时长的地方。
+    const payload: SpeakPayload = {
+      text: picked,
+      ms: isReminderKind(reason) ? REMINDER_BUBBLE_MS : SPEECH_BUBBLE_MS,
+      reason
+    }
     this.send(IPC.PET_SPEAK, payload)
     return picked
   }

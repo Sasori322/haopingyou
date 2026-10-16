@@ -3,6 +3,10 @@ productName: 好屏友
 directories:
   buildResources: build
   output: release
+# 打包排除清单 —— 作用范围是**项目根目录**，不是只排源码。
+# ⚠️ electron-builder **不读 `.gitignore`**，所以留在项目根的杂物会被原样装进 `app.asar`。
+# `.tmp/` 是调试中间产物区（截图 / 调试日志 / 落盘备份）。曾经整个进包：asar 从 ~6MB
+# 涨到 197MB，还把 settings / 待办 的备份一起发给了用户 —— 它必须留在这里。
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -11,6 +15,7 @@ files:
   - '!release/*'
   - '!docs/*'
   - '!.workbuddy/*'
+  - '!.tmp/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!{.npmrc,.gitignore,README.md,CHANGELOG.md}'

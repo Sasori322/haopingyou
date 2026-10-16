@@ -9,11 +9,23 @@ import type {
   SpeakPayload
 } from '@shared/types/pet'
 import type { AppSettings } from '@shared/types/settings'
-import { GAZE_EASE, GAZE_FACING_STATES, GAZE_MAX_SHIFT, GAZE_MAX_TILT } from '@shared/constants'
+import {
+  BUBBLE_MS_MAX,
+  BUBBLE_MS_MIN,
+  GAZE_EASE,
+  GAZE_FACING_STATES,
+  GAZE_MAX_SHIFT,
+  GAZE_MAX_TILT,
+  PET_REMIND_MOTION_MS,
+  PET_SCALE_DEFAULT,
+  SPEECH_BUBBLE_MS
+} from '@shared/constants'
 import Bubble from './components/Bubble.vue'
 import PetSprite from './components/PetSprite.vue'
 import PetSpriteSheet from './components/PetSpriteSheet.vue'
 import type { HitRect } from './core/hitTest'
+import { reminderToneOf } from './core/reminderTone'
+import type { ReminderTone } from './core/reminderTone'
 import { usePointerBridge } from './core/usePointerBridge'
 
 /** 素材缺失时的兜底画布与命中框（DIP，画布坐标系），对齐小猫站立姿态 */
@@ -34,7 +46,11 @@ const state = ref<PetState>('idle')
 const baseState = ref<PetState>('idle')
 const kind = ref<'cat' | 'dog'>('cat')
 const facing = ref<-1 | 1>(1)
-const petScale = ref(1)
+/**
+ * 宠物缩放。初值取 `PET_SCALE_DEFAULT`（= 主进程给的默认值），**不能写 1** ——
+ * 设置是异步到渲染层的，初值偏大的话宠物会先按满尺寸渲染一帧、再缩回去，看着就是"闪一下"。
+ */
+const petScale = ref(PET_SCALE_DEFAULT)
 
 const petId = ref('')
 const petSource = ref<'builtin' | 'user'>('builtin')
@@ -45,6 +61,20 @@ const spriteFailed = ref(false)
 
 const bubbleText = ref('')
 const bubbleLeaving = ref(false)
+/**
+ * 当前气泡的提醒配色。`null` = 普通台词（白气泡）。
+ * 由 `payload.reason` 推出来（见 showBubble），渲染层**不新增任何 IPC 字段**。
+ */
+const bubbleTone = ref<ReminderTone | null>(null)
+
+/**
+ * 提醒时宠物本体的动作开关（等价于给 `.pet-motion` 挂上 `pet-hop` 动画）。
+ *
+ * 为什么不是"切一个新姿态"：提醒用的 `eat` / `rest` 姿态目前**复用了站立族帧**
+ * （见 MEMORY 的素材缺口，dog 甚至 0 张 PNG），切了也看不出来。
+ * 而这里是纯 CSS 变换，**任何宠物、任何素材完整度下都成立**，不需要新画一张。
+ */
+const petMotion = ref(false)
 
 /**
  * 鼠标跟随。
@@ -176,6 +206,7 @@ const bubbleStyle = computed(() => {
 
 let bubbleTimer: number | null = null
 let clickRevertTimer: number | null = null
+let motionTimer: number | null = null
 const cleanups: Array<() => void> = []
 
 function clearTimers(): void {
@@ -187,6 +218,31 @@ function clearTimers(): void {
     window.clearTimeout(clickRevertTimer)
     clickRevertTimer = null
   }
+  if (motionTimer !== null) {
+    window.clearTimeout(motionTimer)
+    motionTimer = null
+  }
+}
+
+/**
+ * 让宠物做一次"提醒动作"。多次连续提醒会**重播**而不是排队。
+ *
+ * ⚠️ 必须先落到 `false` 再翻回 `true`，否则连续两次提醒时 Vue 会把它当成
+ * "属性没变化"而不重新触发 CSS 动画 —— 表现为"第二次提醒宠物不动了"。
+ * 所以这里 `await nextTick()` 让 `false` 真正写进 DOM，再翻回 `true`。
+ */
+async function triggerPetMotion(): Promise<void> {
+  if (motionTimer !== null) {
+    window.clearTimeout(motionTimer)
+    motionTimer = null
+  }
+  petMotion.value = false
+  await nextTick()
+  petMotion.value = true
+  motionTimer = window.setTimeout(() => {
+    petMotion.value = false
+    motionTimer = null
+  }, PET_REMIND_MOTION_MS)
 }
 
 function showBubble(payload: SpeakPayload): void {
@@ -197,12 +253,17 @@ function showBubble(payload: SpeakPayload): void {
   }
   bubbleText.value = payload.text
   bubbleLeaving.value = false
-  const hold = Math.min(Math.max(payload.ms ?? 3200, 800), 8000)
+  // 提醒类走彩色卡片 + 宠物动作；普通台词一律白气泡（和不改造前完全一致）
+  const tone = reminderToneOf(payload.reason)
+  bubbleTone.value = tone
+  if (tone) void triggerPetMotion()
+  const hold = Math.min(Math.max(payload.ms ?? SPEECH_BUBBLE_MS, BUBBLE_MS_MIN), BUBBLE_MS_MAX)
   bubbleTimer = window.setTimeout(() => {
     bubbleLeaving.value = true
     bubbleTimer = window.setTimeout(() => {
       bubbleText.value = ''
       bubbleLeaving.value = false
+      bubbleTone.value = null
       bubbleTimer = null
     }, 220)
   }, hold)
@@ -269,7 +330,7 @@ function applyGaze(payload: GazePayload | null): void {
 }
 
 function applySettings(settings: AppSettings | null): void {
-  petScale.value = settings?.petScale ?? 1
+  petScale.value = settings?.petScale ?? PET_SCALE_DEFAULT
   const enabled = settings?.gaze.enabled ?? true
   if (!enabled) {
     gazeTarget.value = { x: 0, y: 0, near: false, facing: 0 }
@@ -349,24 +410,32 @@ onBeforeUnmount(() => {
     <div class="pet-stage" :style="{ '--pet-scale': String(petScale) }">
       <div class="pet-hit" :style="hitBoxStyle">
         <div class="pet-gaze" :style="gazeStyle">
-          <PetSpriteSheet
-            v-if="useSheet && manifest"
-            :manifest="manifest"
-            :source="petSource"
-            :state="state"
-            :facing="renderFacing"
-            :scale="petScale"
-            @finished="(s) => s === 'click' && revertToBase()"
-            @failed="() => (spriteFailed = true)"
-          />
-          <div v-else class="pet-fallback">
-            <PetSprite :kind="kind" :state="state" :facing="renderFacing" />
+          <!--
+            提醒动作层：**必须在 .pet-gaze 里面**。
+            .pet-gaze 的 transform 由鼠标跟随通过内联样式驱动，动画写在它身上会把跟随位移覆盖掉
+            （CSS 动画的 transform 优先级高于内联样式），宠物一提醒就不再跟光标了。
+            这一层只负责"跳一下"，不做定位。
+          -->
+          <div class="pet-motion" :data-motion="petMotion ? 'remind' : undefined">
+            <PetSpriteSheet
+              v-if="useSheet && manifest"
+              :manifest="manifest"
+              :source="petSource"
+              :state="state"
+              :facing="renderFacing"
+              :scale="petScale"
+              @finished="(s) => s === 'click' && revertToBase()"
+              @failed="() => (spriteFailed = true)"
+            />
+            <div v-else class="pet-fallback">
+              <PetSprite :kind="kind" :state="state" :facing="renderFacing" />
+            </div>
           </div>
         </div>
       </div>
     </div>
     <div v-if="bubbleText" ref="bubbleAnchor" class="bubble-anchor" :style="bubbleStyle">
-      <Bubble :text="bubbleText" :leaving="bubbleLeaving" />
+      <Bubble :text="bubbleText" :leaving="bubbleLeaving" :tone="bubbleTone" />
     </div>
   </div>
 </template>

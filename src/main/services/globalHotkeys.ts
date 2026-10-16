@@ -1,9 +1,10 @@
 /**
  * 全局快捷键的注册与校验工具（按**槽位**分账）。
  *
- * 项目里有两个全局快捷键：`clipboard`（唤起剪贴板历史面板）与 `todo`（唤起待办便签面板）。
- * 它们的规则完全一样，只有"按下去要做什么"不同，所以收口在这里、用槽位区分；
- * 调用方（初始化 / IPC / 设置变更）只管传槽位，不碰 `globalShortcut` 本身。
+ * 项目里有三个全局快捷键：`clipboard`（唤起剪贴板历史面板）、`todo`（唤起待办面板）
+ * 与 `note`（新建一张桌面便签）。它们的规则完全一样，只有"按下去要做什么"不同，
+ * 所以收口在这里、用槽位区分；调用方（初始化 / IPC / 设置变更）只管传槽位，
+ * 不碰 `globalShortcut` 本身。
  *
  * 设计要点：
  * ① 快捷键字符串走 Electron Accelerator 格式（`Ctrl+Shift+V` 等）。
@@ -11,7 +12,7 @@
  *    无法单点区分。这里先 format 校验、再用 register-noop + 立即 unregister 试探占用。
  * ③ 空字符串 = 禁用该快捷键（用户能继续走托盘菜单入口）。
  * ④ 真正的注册（带回调）走 `setHotkey`；这个模块只负责"hotkey 字符串"层面，不绑定到操作层。
- * ⑤ **槽位之间互不影响**：录制待办快捷键时不应该把剪贴板的键也解绑，
+ * ⑤ **槽位之间互不影响**：录制便签快捷键时，剪贴板与待办那两把必须照常可用，
  *    所以"挂起 / 恢复"这套状态必须每个槽位各存一份，不能共用一组模块级变量。
  */
 import { globalShortcut } from 'electron'
@@ -19,13 +20,17 @@ import { createLogger } from '../utils/logger'
 
 const log = createLogger('hotkey')
 
-/** 快捷键槽位：key 与设置里的位置一一对应（`settings.clipboard.hotkey` / `settings.todo.hotkey`） */
-export type HotkeySlot = 'clipboard' | 'todo'
+/**
+ * 快捷键槽位：key 与设置里的位置一一对应
+ * （`settings.clipboard.hotkey` / `settings.todo.hotkey` / `settings.todo.noteHotkey`）
+ */
+export type HotkeySlot = 'clipboard' | 'todo' | 'note'
 
 /** 仅用于日志与报错文案，别拿它做逻辑判断 */
 const SLOT_LABEL: Record<HotkeySlot, string> = {
   clipboard: '剪贴板面板',
-  todo: '待办便签面板'
+  todo: '待办面板',
+  note: '桌面便签'
 }
 
 /**
@@ -89,7 +94,8 @@ function emptySlot(): SlotState {
 
 const slots: Record<HotkeySlot, SlotState> = {
   clipboard: emptySlot(),
-  todo: emptySlot()
+  todo: emptySlot(),
+  note: emptySlot()
 }
 
 /** 注销某个槽位当前注册的键（内部使用；失败只记日志，不抛） */
@@ -196,4 +202,24 @@ export function unregisterAllHotkeys(): void {
       state.callback = null
     }
   }
+}
+
+/**
+ * **只给自检钩子用**：手动触发某个槽位当前挂着的回调。
+ *
+ * 为什么需要它：Windows 上没有任何办法从脚本里发一次**真实的**全局按键
+ * （本机 `Add-Type` 与 `WScript.Shell` 都被安全策略拦住，见 `docs/STATUS.md` §四），
+ * 所以"按下去到底会发生什么"这一段不可能靠模拟按键来验。
+ *
+ * 它与 `.tmp/hotkey-probe.cjs` 是**两半，缺一不可**：
+ *  - probe 报 `TAKEN` → 证明系统层面这把键真的被本应用握住了；
+ *  - `fireHotkey` → 证明槽位里存着的回调是**对的那个**（比如别把便签的键接到待办回调上）。
+ *
+ * 返回 `false` = 该槽位当前没有注册（键为空串，或注册时被占用而失败）。
+ */
+export function fireHotkey(slot: HotkeySlot): boolean {
+  const callback = slots[slot].callback
+  if (!callback) return false
+  callback()
+  return true
 }

@@ -1,3 +1,4 @@
+import type { ReminderKind } from './types/reminder'
 import type { AppSettings } from './types/settings'
 
 /** 必须与 electron-builder.yml 的 appId 完全一致，否则 Windows 通知不显示应用名 */
@@ -65,6 +66,18 @@ export const PET_DIR_NAME = 'pets'
  */
 export const PET_SCALE_MIN = 0.5
 export const PET_SCALE_MAX = 1
+
+/**
+ * 新装的默认缩放（2026-10-16 定）。
+ *
+ * 特意取**下限** 0.5，而不是满尺寸 1：新用户第一次见到宠物时，它应该是个"在边角上待着的
+ * 小家伙"，而不是占掉桌上一大块的主角；觉得太小自己在设置页往后拖即可（区间见上）。
+ *
+ * ⚠️ 这个数有四个读者：`DEFAULT_SETTINGS.petScale`（真默认值）、设置页读值的兜底、
+ * 宠物窗口 `petScale` ref 的初值——**都引用这里**，别再各写一个 `1` 或 `0.5` 字面量。
+ * 否则主进程给的是 0.5、而渲染层首帧先按 1 渲染，宠物会先"闪一下大的"再缩回去。
+ */
+export const PET_SCALE_DEFAULT = 0.5
 
 /**
  * 宠物自定义昵称的最大长度（按 JS 字符数，中文算 1）。
@@ -159,12 +172,58 @@ export const REMIND_FAST_AWAY_SEC = 45
 /** 免打扰的预设时长（分钟），托盘与宠物右键菜单共用 */
 export const DND_PRESET_MINUTES: readonly number[] = [30, 60]
 
+// ---------------- 提醒气泡的"存在感" ----------------
+
+/**
+ * 提醒类型清单（与 `ReminderKind` 同名）。**只有这一处是运行时数组**：
+ * 类型系统那边是联合类型，没法用它做 `includes` 判断。
+ *
+ * 加新的提醒类型时这里要一起补，否则新提醒会被当成普通闲聊（短时长、白气泡、无动作）。
+ */
+export const REMINDER_KINDS: readonly ReminderKind[] = ['sedentary', 'water', 'pomodoro', 'todo']
+
+/**
+ * `speak(reason)` 的 reason 是不是提醒类。
+ *
+ * ⚠️ 提醒类型与宠物状态（`PetState`）刻意**同名但不相交**：
+ * 状态是 idle/walk/sleep/eat/click/drag/drop/rest/hot/focus，
+ * 提醒是 sedentary/water/pomodoro/todo。所以这里可以直接用 reason 判定，
+ * 不需要额外的标识字段 —— 气泡的时长、配色、宠物动作全靠它分叉。
+ */
+export function isReminderKind(reason: string | undefined): reason is ReminderKind {
+  return !!reason && (REMINDER_KINDS as readonly string[]).includes(reason)
+}
+
+/**
+ * 气泡停留时长（ms）。
+ *
+ * **提醒刻意比闲聊长得多**（2026-10-16 定：3.2s → 8s）。3.2 秒是"余光扫到就够了"的
+ * 闲聊尺度；而提醒要的是用户**离开当前窗口去做别的事**（起身、接水），
+ * 视线通常不在这块屏幕上，3.2 秒几乎必然整段错过 —— 实际表现就是"跟普通说话没区别"。
+ */
+export const SPEECH_BUBBLE_MS = 3200
+export const REMINDER_BUBBLE_MS = 8000
+
+/**
+ * 渲染层对 `SpeakPayload.ms` 的夹取区间。
+ * `BUBBLE_MS_MAX` 必须 ≥ `REMINDER_BUBBLE_MS`，否则 8 秒会被静默截回旧上限。
+ */
+export const BUBBLE_MS_MIN = 800
+export const BUBBLE_MS_MAX = 10_000
+
+/**
+ * 提醒时宠物本体动作的时长（ms）。
+ * 与 CSS 的 `pet-hop` 关键帧时长**必须一致**：JS 靠这个定时器摘掉 data 属性，
+ * 比动画短会中途打断，比动画长则下一次提醒可能不重播（属性没变化）。
+ */
+export const PET_REMIND_MOTION_MS = 1100
+
 export const DEFAULT_SETTINGS: AppSettings = {
   activePetId: 'cat',
   // 空对象 = 所有宠物都用 manifest 里的默认昵称
   petNames: {},
   petVisible: true,
-  petScale: 1,
+  petScale: PET_SCALE_DEFAULT,
   alwaysOnTop: true,
   autostart: false,
   reactToLoad: true,
@@ -203,18 +262,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   // 剪贴板历史默认：总开关开、不采图、空黑名单（黑名单第一条在 PRD 里举例）；
   // 存储目录留 null 表示沿用 <userData>/clipboard/；快捷键沿用老规矩。
+  // 快捷键一律写 `Ctrl` 而不是 Electron 的 `CommandOrControl`：本项目只跑 Windows，两者等价，
+  // 而 `Ctrl` 才是设置页里给用户看的样子（显示层不再翻译，见 renderer `common/hotkey.ts`）。
   clipboard: {
     enabled: true,
     listenImages: false,
     excludeKeywords: ['password', 'passwd', '身份证', '银行卡'],
     storageDir: null,
-    hotkey: 'CommandOrControl+Shift+V'
+    hotkey: 'Ctrl+Shift+V'
   },
-  // 待办便签面板的默认快捷键。
+  // 待办面板 / 便签的默认快捷键。
   // 为什么不用 Ctrl+Shift+T：那个组合在浏览器里是「恢复刚关掉的标签页」，全局注册会把它
   // 从**所有**应用手里抢走，用户只会以"浏览器坏了"的形式感知到。Alt 组合在 Windows 上
   // 几乎没有系统级占用，代价小得多；用户随时可以在设置里改掉或清空。
+  // 便签用 N（Note）：同理不碰 Ctrl+Shift+N（浏览器 / 资源管理器里的「新建」）。
   todo: {
-    hotkey: 'CommandOrControl+Alt+T'
+    hotkey: 'Ctrl+Alt+T',
+    noteHotkey: 'Ctrl+Alt+N'
   }
 }

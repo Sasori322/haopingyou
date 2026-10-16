@@ -110,7 +110,14 @@ const api: PetApi = {
     tryHotkey: (hotkey: string) => ipcRenderer.invoke(IPC.TODO_TRY_HOTKEY, hotkey),
     beginHotkeyRecording: () => ipcRenderer.invoke(IPC.TODO_BEGIN_RECORDING),
     endHotkeyRecording: (newHotkey: string | null) =>
-      ipcRenderer.invoke(IPC.TODO_END_RECORDING, newHotkey)
+      ipcRenderer.invoke(IPC.TODO_END_RECORDING, newHotkey),
+    // 便签槽位（按下即新建一张便签）：同形的三件套收成子对象，方便整个塞给录制控件
+    noteHotkey: {
+      tryHotkey: (hotkey: string) => ipcRenderer.invoke(IPC.TODO_NOTE_TRY_HOTKEY, hotkey),
+      beginHotkeyRecording: () => ipcRenderer.invoke(IPC.TODO_NOTE_BEGIN_RECORDING),
+      endHotkeyRecording: (newHotkey: string | null) =>
+        ipcRenderer.invoke(IPC.TODO_NOTE_END_RECORDING, newHotkey)
+    }
   }
 }
 

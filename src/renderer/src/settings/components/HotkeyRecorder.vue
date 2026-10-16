@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 全局快捷键录制控件（剪贴板历史 / 待办便签共用）。
+ * 全局快捷键录制控件（剪贴板历史 / 待办面板 / 桌面便签 三处共用）。
  *
  * 一行设置：左侧标题 + 说明，右侧「录制…／取消 + 应用」。
  *
@@ -8,6 +8,11 @@
  * Electron Accelerator 是 `CommandOrControl+Shift+V` 这种写法，让用户手打既不直观、
  * 也容易写错（大小写、`Ctrl` 与 `Control` 的差别）。录制模式直接把 KeyboardEvent 翻译成
  * Accelerator：用户按什么就是什么。
+ *
+ * ## 对外一律显示 `Ctrl`
+ * 上面的 `CommandOrControl` 是 Electron 的写法，本项目只跑 Windows，它在 Windows 上就是 Ctrl。
+ * 所以录制产出、显示、回写设置全都先过一遍 `common/hotkey.ts` 的 `formatHotkey()`：
+ * 用户看到的永远是 `Ctrl+Alt+T`，而不是那一长串。
  *
  * ## 两个必须成对的动作
  * 进入录制要 `beginHotkeyRecording()` 让主进程**临时解绑旧键** —— 否则用户按的恰好是
@@ -19,8 +24,9 @@
  */
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { formatHotkey } from '@/common/hotkey'
 
-/** 一个快捷键槽位需要的三个主进程能力（`petAPI.clipboard` / `petAPI.todo` 都满足） */
+/** 一个快捷键槽位需要的三个主进程能力（`petAPI.clipboard` / `petAPI.todo` / `petAPI.todo.noteHotkey` 都满足） */
 interface HotkeyApi {
   tryHotkey(hotkey: string): Promise<{ ok: boolean; reason?: string }>
   beginHotkeyRecording(): Promise<void>
@@ -37,8 +43,18 @@ const props = withDefaults(
     api: HotkeyApi
     disabled?: boolean
     placeholder?: string
+    /**
+     * 「留空」那一行的说明文案。
+     * 禁用之后的退路各槽位不同（面板走托盘菜单、便签走托盘「记一条便签」），
+     * 所以留一个可覆盖的口子；不传时用面板那套说法。
+     */
+    emptyHint?: string
   }>(),
-  { disabled: false, placeholder: 'CommandOrControl+Shift+V' }
+  {
+    disabled: false,
+    placeholder: 'Ctrl+Shift+V',
+    emptyHint: '留空 = 不使用全局快捷键，改为从托盘打开面板。'
+  }
 )
 
 const emit = defineEmits<{ (e: 'change', value: string): void }>()
@@ -50,12 +66,18 @@ const recorderPreview = ref('')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const recorderInputRef = ref<any>(null)
 
-/** 用户正在输入的本地草稿；保存到设置层走 blur / Enter 或录制 commit */
+/**
+ * 用户正在输入的本地草稿；保存到设置层走 blur / Enter 或录制 commit。
+ * 从设置层同步过来时先归一次：老存档里的 `CommandOrControl+…` 在这里就变成 `Ctrl+…`，
+ * 用户不会在输入框里见到那一长串（归一不影响功能，见 `common/hotkey.ts`）。
+ */
 const draft = ref<string>('')
 watch(
   () => props.modelValue,
   (value) => {
-    if (value !== undefined && draft.value !== value) draft.value = value
+    if (value === undefined) return
+    const shown = formatHotkey(value)
+    if (shown !== draft.value) draft.value = shown
   },
   { immediate: true }
 )
@@ -68,31 +90,20 @@ const check = ref<HotkeyCheck | null>(null)
 
 // ---- 键盘翻译 ----
 
-const MODIFIER_NAMES = new Set([
-  'CommandOrControl',
-  'CmdOrCtrl',
-  'Alt',
-  'AltGr',
-  'Shift',
-  'Super',
-  'Meta'
-])
-/** 排序：固定 Ctrl/Alt/Shift/Super 这套，便于 UI 显示稳定 */
-const MODIFIER_ORDER = ['CommandOrControl', 'Alt', 'Shift', 'Super']
+/**
+ * 录制能产出的修饰键（下面 `partsFromKeyboard` 只推这几个）。
+ * 这里**只负责辨认**"这一段是不是修饰键"，把修饰键摆到前面、按固定顺序排好那段
+ * 交给 `formatHotkey`，两边不重复维护一份顺序表。
+ */
+const MODIFIER_NAMES = new Set(['Ctrl', 'Alt', 'AltGr', 'Shift', 'Super'])
 
 function isModifierName(name: string): boolean {
   return MODIFIER_NAMES.has(name)
 }
 
+/** parts → 规范 accelerator 串（修饰键在前、按固定顺序） */
 function canonicalize(parts: string[]): string {
-  const mods: string[] = []
-  const rest: string[] = []
-  for (const p of parts) {
-    if (isModifierName(p)) mods.push(p)
-    else rest.push(p)
-  }
-  mods.sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b))
-  return [...mods, ...rest].join('+')
+  return formatHotkey(parts.join('+'))
 }
 
 /** 把 KeyboardEvent 的 `code` 翻译成 Electron accelerator 接受的按键名 */
@@ -151,10 +162,10 @@ function keyToElectronMainKey(e: KeyboardEvent): string | null {
   }
 }
 
-/** 给一个 KeyboardEvent 拼出候选 accelerator 段。修饰键按 Ctrl→Alt→Shift→Super 顺序排 */
+/** 给一个 KeyboardEvent 拼出候选 accelerator 段。修饰键统一写 `Ctrl`（见文件头「对外一律显示 Ctrl」） */
 function partsFromKeyboard(e: KeyboardEvent): string[] {
   const mods: string[] = []
-  if (e.ctrlKey) mods.push('CommandOrControl')
+  if (e.ctrlKey) mods.push('Ctrl')
   if (e.altKey) mods.push('Alt')
   if (e.shiftKey) mods.push('Shift')
   if (e.metaKey) mods.push('Super')
@@ -178,13 +189,13 @@ async function startRecording(): Promise<void> {
 async function cancelRecording(): Promise<void> {
   recording.value = false
   recorderPreview.value = ''
-  // 草稿还原到设置里的值
-  if (draft.value !== props.modelValue) draft.value = props.modelValue
+  // 草稿还原到设置里的值（同样归一，免得输入框里又冒出 CommandOrControl）
+  draft.value = formatHotkey(props.modelValue)
   await props.api.endHotkeyRecording(null)
 }
 
 async function commitRecording(accelerator: string): Promise<void> {
-  const next = canonicalize(accelerator.split('+'))
+  const next = formatHotkey(accelerator)
   if (recording.value) {
     recording.value = false
     recorderPreview.value = ''
@@ -242,7 +253,7 @@ onBeforeUnmount(() => {
 
 async function validateDraft(): Promise<void> {
   if (recording.value) return
-  const value = draft.value.trim()
+  const value = formatHotkey(draft.value)
   if (value === '') {
     check.value = { ok: true, reason: '已禁用' }
     return
@@ -252,12 +263,15 @@ async function validateDraft(): Promise<void> {
 
 async function applyDraft(): Promise<void> {
   if (recording.value) await cancelRecording()
+  // 手填的串也归一（用户可能照着老文档敲了 CommandOrControl），再校验、再回写设置
+  const value = formatHotkey(draft.value)
+  draft.value = value
   await validateDraft()
   if (!check.value?.ok) {
     ElMessage.error(`快捷键不可用：${check.value?.reason ?? '未知'}`)
     return
   }
-  emit('change', draft.value.trim())
+  emit('change', value)
 }
 </script>
 
@@ -269,7 +283,7 @@ async function applyDraft(): Promise<void> {
         <span v-if="recording">正在录制：按键组合（Esc 取消）</span>
         <span v-else>
           点 <strong>录制…</strong>，再按你想用的组合（必须含 Ctrl / Alt / Shift 等修饰键）。<br />
-          留空 = 不使用全局快捷键，改为从托盘打开面板。<br />
+          {{ emptyHint }}<br />
         </span>
         <span v-if="check?.ok && !recording" class="hint-ok">✓ 可用：{{ check.reason ?? 'ok' }}</span>
         <span v-else-if="check && !check.ok && !recording" class="hint-err">

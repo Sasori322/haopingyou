@@ -169,5 +169,18 @@ export interface PetApi {
     tryHotkey(hotkey: string): Promise<{ ok: boolean; reason?: string }>
     beginHotkeyRecording(): Promise<void>
     endHotkeyRecording(newHotkey: string | null): Promise<void>
+    /**
+     * 便签快捷键（按下即新建一张便签并聚焦）的那一套三件套。
+     *
+     * 刻意收成一个**子对象**而不是三兄弟函数：`HotkeyRecorder.vue` 要的正是一个
+     * `{ tryHotkey, beginHotkeyRecording, endHotkeyRecording }` 形状的槽位，
+     * 同一个组件在两处复用时，只要把 `api` 换成 `todo.noteHotkey` 就行，
+     * 不用再加一个 prop 去区分"这个组件现在代表哪把键"。
+     */
+    noteHotkey: {
+      tryHotkey(hotkey: string): Promise<{ ok: boolean; reason?: string }>
+      beginHotkeyRecording(): Promise<void>
+      endHotkeyRecording(newHotkey: string | null): Promise<void>
+    }
   }
 }
