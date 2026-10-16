@@ -64,6 +64,25 @@ export interface StickyNote {
   pinned: boolean
   createdAt: number
   updatedAt: number
+  /**
+   * 是否贴在桌面上（= 桌面上该有它独立的一块小窗口）。
+   *
+   * 与「置顶」是两件事：`pinned` 只影响它在列表里的排序，这个是"人在不在桌上"。
+   * 老数据缺这个字段时一律按 `false` 恢复 —— 版本升级不该让用户桌面上凭空
+   * 多出一堆纸条，要贴哪几张由他自己点。
+   */
+  onDesktop: boolean
+  /**
+   * 桌面便签窗口的位置与尺寸（屏幕坐标 / DIP）。`null` = 还没摆过，
+   * 由主进程挑一个空位放（见 `src/main/notes/`）。
+   *
+   * 面板的位置刻意不持久化（这个项目里位置本来都不是配置项），但便签必须持久化：
+   * 每张便签是一个独立窗口，不记位置的话每次启动它们会全部叠在同一个点上。
+   */
+  x: number | null
+  y: number | null
+  w: number | null
+  h: number | null
 }
 
 /** 完成统计（设置页与面板的头部数字） */
@@ -116,11 +135,19 @@ export interface TodoPatch {
 export interface StickyDraft {
   text: string
   color: StickyColor
+  /**
+   * 新建时是否直接贴到桌面。**不传 = true**（"记一条便签"的意图本来就是"贴在那儿"）。
+   * 面板 / 托盘 / 宠物右键这几个快速入口都走默认；只有设置页那种"先存着"的场景才显式传 false。
+   */
+  onDesktop?: boolean
 }
 
+/** 局部更新：只出现需要改的字段 */
 export interface StickyPatch {
   text?: string
   color?: StickyColor
+  /** 贴出 / 收起桌面便签 */
+  onDesktop?: boolean
 }
 
 // ---------------- 限额（IPC 校验层与 UI 提示共用一份） ----------------
@@ -132,6 +159,26 @@ export const TODO_TAGS_MAX = 6
 export const TODO_TAG_MAX = 16
 /** 便签正文上限 */
 export const NOTE_TEXT_MAX = 2000
+
+// ---------------- 桌面便签窗口 ----------------
+
+/** 桌面便签的默认尺寸（DIP）。一张纸条的大小：够写几行，又不至于盖住小半个屏幕 */
+export const NOTE_WIN_W = 220
+export const NOTE_WIN_H = 180
+/** 允许用户拖出来的尺寸区间。下限保证"色纸"的形状还在，上限防止把桌面糊住 */
+export const NOTE_WIN_MIN_W = 150
+export const NOTE_WIN_MIN_H = 110
+export const NOTE_WIN_MAX_W = 640
+export const NOTE_WIN_MAX_H = 720
+/**
+ * 同时贴在桌面上的便签上限。
+ *
+ * 每张便签是一个**独立的 Electron 窗口**（一个渲染进程），不是画在同一个大透明窗里的
+ * ——后者会得到一个铺满屏幕的透明窗口，鼠标穿透只能逐像素切换，而这在本项目里是
+ * 明确的高频禁忌（会让全系统鼠标卡死，见 `docs/STATUS.md` §四）。
+ * 独立窗口没有这个问题，代价是内存：一个窗口几十 MB。所以给个上限兜住极端情况。
+ */
+export const NOTE_DESKTOP_MAX = 24
 
 /** 截止时间的可接受区间（毫秒）。挡住 0 / NaN / 2699 年这类明显的脏值 */
 export const TODO_DUE_MIN = Date.UTC(2000, 0, 1)

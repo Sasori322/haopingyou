@@ -50,7 +50,7 @@ button {
     0 2px 8px rgba(16, 24, 40, 0.06);
 }
 
-/* ---------------- 头部（页签 + 拖动区） ---------------- */
+/* ---------------- 头部（标题 + 拖动区） ---------------- */
 
 .todo-header {
   /* 无边框窗口靠这一行拖动；页签与按钮必须显式 no-drag 否则点不动 */
@@ -64,59 +64,27 @@ button {
   flex: 0 0 auto;
 }
 
-/* 分段控件：胶囊里两个页签，选中的那个是浮起来的白片。
-   页签直接把计数吃掉，省一行标题 —— 320px 宽的窗口，纵向每一像素都要省。
-   `margin-right: auto` 把右侧余量让给拖动（header 是 drag 区）。 */
-.todo-tabs {
+/* 标题直接把条数吃掉，省一行 —— 320px 宽的窗口，纵向每一像素都要省。
+   `margin-right: auto` 把右侧的余量让给拖动（header 整行是 drag 区）。 */
+.todo-header__title {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  background: #f2f4f7;
-  border-radius: 10px;
+  gap: 6px;
   margin-right: auto;
-  min-width: 0;
-}
-
-.todo-tab {
-  -webkit-app-region: no-drag;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: transparent;
-  font: inherit;
-  font-size: 12.5px;
-  color: #6b7280;
-  padding: 4px 9px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.14s, color 0.14s, box-shadow 0.14s;
-}
-
-.todo-tab:hover {
+  font-size: 13px;
+  font-weight: 600;
   color: #111827;
 }
 
-.todo-tab--active {
-  background: #ffffff;
-  color: var(--accent);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.1), 0 0 0 1px rgba(16, 24, 40, 0.03);
-}
-
-.todo-tab__count {
+.todo-header__count {
   font-size: 10.5px;
   line-height: 1;
-  padding: 2px 5px;
+  font-weight: 500;
+  padding: 2px 6px;
   border-radius: 999px;
-  background: #e6eaf0;
-  color: #6b7280;
-  font-variant-numeric: tabular-nums;
-}
-
-.todo-tab--active .todo-tab__count {
   background: color-mix(in srgb, var(--accent) 13%, #ffffff);
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .todo-header__close {
@@ -151,17 +119,6 @@ button {
   border-bottom: 1px solid #f4f6f9;
   background: #ffffff;
   flex: 0 0 auto;
-}
-
-/* 便签页签的录入区是两行：输入行 + 调色行 */
-.todo-quick--stacked {
-  flex-direction: column;
-  gap: 7px;
-}
-
-.todo-quick__row {
-  display: flex;
-  gap: 6px;
 }
 
 /* 优先级圆点：三档用「填充程度 + 颜色」双编码 —— 空心 = 低、中心实心 = 普通、全实心红 = 高。
@@ -264,44 +221,6 @@ button {
 
 .todo-btn--primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, #000000);
-}
-
-/* 便签调色行。色点直接用 `NOTE_SKIN[*].border`（内联 style 给），与卡片本身同源；
-   纸色都偏淡，所以额外压一圈内描边给个轮廓，否则白底上几乎看不见。 */
-.note-colors {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-left: 2px;
-}
-
-.note-colors__label {
-  font-size: 10.5px;
-  color: #a8b0bd;
-}
-
-.note-color {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.08);
-  transition: transform 0.12s, box-shadow 0.12s;
-}
-
-.note-color:hover {
-  transform: scale(1.15);
-}
-
-/* 选中态：白隙 + 主题色圈，比"变粗的描边"更容易在五个淡色圆里认出来 */
-.note-color--on {
-  transform: scale(1.1);
-  box-shadow:
-    inset 0 0 0 1px rgba(16, 24, 40, 0.08),
-    0 0 0 2px #ffffff,
-    0 0 0 3.5px var(--accent);
 }
 
 /* ---------------- 列表 ---------------- */
@@ -485,109 +404,6 @@ button {
   height: 34px;
   border-radius: 50%;
   border: 2px dashed #dfe4ea;
-}
-
-/* ---------------- 便签墙 ---------------- */
-
-/* 两列：320px 的窗口里一列放不下"一眼扫好几张"，三列又只剩十来个字。
-   卡片宽度由 grid 决定，纸色由内联 style 给（NOTE_SKIN，与设置页同一份）。 */
-.note-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 1px 1px 4px;
-}
-
-.note-card {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  border: 1px solid #ffe58f;
-  border-radius: 11px;
-  padding: 8px 9px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
-  /* 给操作行留位：操作按钮 hover 才显形，但布局高度不能跟着变，否则整墙会跳 */
-  min-height: 76px;
-  transition: box-shadow 0.15s;
-}
-
-.note-card:hover {
-  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.1);
-}
-
-/* 角标走**正常流**（卡片自己就是 flex column），不做绝对定位：
-   绝对定位会让它压在正文第一行上（2026-10-15 实机截图看到"置顶"盖住开头几个字）。
-   置顶卡片多一行角标，其余卡片没有 —— grid 行内高度本来就自动拉齐，不会歪。 */
-.note-card__pin {
-  align-self: flex-start;
-  font-size: 10px;
-  line-height: 1.7;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: #b45309;
-  background: rgba(255, 255, 255, 0.88);
-  border-radius: 999px;
-  padding: 0 6px;
-}
-
-.note-card__text {
-  flex: 1;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #3f3f46;
-  /* 换行与长串都要能断，否则便签会把卡片撑出去 */
-  white-space: pre-wrap;
-  word-break: break-word;
-  /* 超长正文只显示前几行，完整内容在设置页看 */
-  max-height: 7.5em;
-  overflow: hidden;
-}
-
-.note-card__ops {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-
-.note-card:hover .note-card__ops {
-  opacity: 1;
-}
-
-/* 图标按钮：文字"取消置顶"在最窄的窗口里会挤掉正文可用宽度。
-   常态无底（卡片底已经是彩色纸，再压两块白底会显得很吵），hover 才浮出白片。 */
-.note-card__op {
-  display: grid;
-  place-items: center;
-  min-width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: #6b7280;
-  font-size: 11px;
-  line-height: 1;
-  border-radius: 7px;
-  padding: 0 5px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.14s, color 0.14s;
-}
-
-.note-card__op:hover {
-  background: rgba(255, 255, 255, 0.92);
-  color: #18181b;
-}
-
-/* 已置顶：实心星配琥珀色，一眼能从"一堆空心星"里认出来 */
-.note-card__op--on {
-  color: #b45309;
-}
-
-.note-card__op--del:hover {
-  background: #fdecec;
-  color: #c0392b;
 }
 
 /* ---------------- 底部 ---------------- */

@@ -39,7 +39,8 @@ export default defineConfig({
           pet: resolve(__dirname, 'src/renderer/pet.html'),
           settings: resolve(__dirname, 'src/renderer/settings.html'),
           clipboard: resolve(__dirname, 'src/renderer/clipboard.html'),
-          todo: resolve(__dirname, 'src/renderer/todo.html')
+          todo: resolve(__dirname, 'src/renderer/todo.html'),
+          notes: resolve(__dirname, 'src/renderer/notes.html')
         }
       }
     },

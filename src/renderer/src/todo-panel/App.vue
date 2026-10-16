@@ -1,66 +1,39 @@
 <script setup lang="ts">
 /**
- * 旁挂小面板：常驻显示**未完成的待办**与**全部便签**。
+ * 旁挂小面板：常驻显示**未完成的待办**。
  *
- * 为什么便签也要挂在这里：便签的用途就是"随时看得见"，只躺在设置页里等于没有。
- * 面板本来就是独立窗口 + 无边框 + 置顶 + 可拖，复用它是**零成本**的桌面常驻
- * （另开一个"便签墙"窗口要重新解决层级归属、透明区鼠标穿透、位置持久化三件事，
- * 见 `docs/STATUS.md`）。
+ * ## 便签去哪了（2026-10-16 拆分）
+ * 这里原先挂着第二个页签「便签」。问题是便签的用途就是"贴在那儿看得见"，
+ * 而它被挤在一个 320px 的窄窗里跟待办抢位置 —— 想看一眼还得先切页签，切完还要翻。
+ * 现在它独立成了**桌面上的实体便签**：一张便签一个窗口，能直接在上面写字，
+ * 各关各的（见 `src/main/notes/` 与 `src/renderer/src/notes/`）。
+ * 所以这个面板回到只做一件事：**待办**。
  *
- * 与设置页的分工：
+ * ## 与设置页的分工
  * - 这里的职责是"瞥一眼 + 勾掉 + 随手记一条"，所以只读未完成待办、只有最简单的增/删/完成；
- * - **记的时候**能顺手定两件事（2026-10-15 加）：待办点左侧那个圆点切优先级、便签点色点挑颜色。
- *   这两项是"记下来那一刻心里就有数"的，让用户为它专门跑一趟设置页，代价不对等；
- * - 但**改已经记下的条目**（改优先级 / 标签 / 截止时间、便签换色与改正文）仍然只在设置页 ——
- *   面板是常驻窄窗，hover 时再长出一排控件就把它变成小设置页了。
- *
- * 底线是**不新增纵向控件行**：优先级挤进录入行左侧那 28px，色点是便签录入区第二行
- * （便签页签的列表是两列卡片，纵向本来比待办宽裕），列表可视高度基本没变。
+ * - **记的时候**能顺手定优先级（点左侧圆点循环），但**改已经记下的条目**
+ *   （优先级 / 标签 / 截止时间）仍然只在设置页 —— 面板是常驻窄窗，
+ *   hover 时再长出一排控件就把它变成小设置页了。
  *
  * 数据流：写操作返回最新快照（直接赋值），`onChanged` 只用来接住**另一个窗口**的改动
  * —— 设置页和这个面板经常同时开着，两边显示不一致是最容易被发现的那种"坏味道"。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import {
-  NOTE_TEXT_MAX,
-  STICKY_COLORS,
-  TODO_PRIORITIES,
-  TODO_PRIORITY_LABEL,
-  TODO_TITLE_MAX
-} from '@shared/types/todo'
-import type {
-  StickyColor,
-  StickyNote,
-  TodoItem,
-  TodoPriority,
-  TodoSnapshot
-} from '@shared/types/todo'
+import { TODO_PRIORITIES, TODO_PRIORITY_LABEL, TODO_TITLE_MAX } from '@shared/types/todo'
+import type { TodoItem, TodoPriority, TodoSnapshot } from '@shared/types/todo'
 import { dueBucket, formatDueShort, formatOverdueSpan } from '@/common/todo-date'
-import { NOTE_SKIN } from '@/common/note-skin'
-
-type PanelTab = 'todo' | 'notes'
-
-/** 面板可以用 `#notes` 直开便签页签（托盘入口 / `HPY_CAPTURE_TODO_PANEL_TAB` 自检都走它） */
-function readInitialTab(): PanelTab {
-  return window.location.hash.replace('#', '') === 'notes' ? 'notes' : 'todo'
-}
 
 const snapshot = ref<TodoSnapshot | null>(null)
-const tab = ref<PanelTab>(readInitialTab())
 const quickTitle = ref('')
-const quickNote = ref('')
 /**
- * 快速录入的两个"顺手选项"。**记完不重置**：连记三件同优先级的活儿、同色的一叠便签是常态，
- * 每条都重新点一遍才是打扰。当前档位就摆在录入行上（圆点 / 色点），看得见、随时能改。
+ * 快速录入的"顺手选项"。**记完不重置**：连记三件同优先级的活儿是常态，
+ * 每条都重新点一遍才是打扰。当前档位就摆在录入行上（圆点），看得见、随时能改。
  */
 const quickPriority = ref<TodoPriority>('normal')
-const quickNoteColor = ref<StickyColor>('yellow')
 const busy = ref(false)
-const noteBusy = ref(false)
 /** 每分钟刷新的"现在"：让"已过期 3 分钟"和分档（今天/过期）自己往前走 */
 const now = ref(Date.now())
 const inputRef = ref<HTMLInputElement | null>(null)
-const noteInputRef = ref<HTMLInputElement | null>(null)
 
 let clock: ReturnType<typeof setInterval> | null = null
 const disposers: Array<() => void> = []
@@ -81,10 +54,6 @@ const activeTodos = computed<TodoItem[]>(() =>
       return a.order - b.order
     })
 )
-
-/** 便签顺序**不在面板里排**：主进程给的就是「置顶优先 → 最近改过」，再排一次就会两边不一致 */
-const notes = computed<StickyNote[]>(() => snapshot.value?.notes ?? [])
-const pinnedCount = computed(() => notes.value.filter((n) => n.pinned).length)
 
 interface Chip {
   text: string
@@ -125,21 +94,6 @@ async function refresh(): Promise<void> {
   snapshot.value = await window.petAPI.todo.snapshot()
 }
 
-function switchTab(next: PanelTab): void {
-  if (tab.value === next) {
-    focusActiveInput()
-    return
-  }
-  tab.value = next
-  void nextTick(() => focusActiveInput())
-}
-
-/** 切页签后把光标落到当前页签的输入框：面板的核心动作就是"随手记一条" */
-function focusActiveInput(): void {
-  if (tab.value === 'todo') inputRef.value?.focus()
-  else noteInputRef.value?.focus()
-}
-
 /**
  * 优先级圆点：点一下往下一档（普通 → 高 → 低 → 普通）。
  *
@@ -173,21 +127,6 @@ async function addQuick(): Promise<void> {
   }
 }
 
-async function addQuickNote(): Promise<void> {
-  const text = quickNote.value.trim()
-  if (text.length === 0 || noteBusy.value) return
-  noteBusy.value = true
-  try {
-    // 记的时候就能挑颜色（默认黄）。改已有便签的颜色 / 正文仍然在设置页。
-    snapshot.value = await window.petAPI.todo.addNote({ text, color: quickNoteColor.value })
-    quickNote.value = ''
-  } finally {
-    noteBusy.value = false
-    await nextTick()
-    noteInputRef.value?.focus()
-  }
-}
-
 function complete(todo: TodoItem): void {
   void window.petAPI.todo.setDone(todo.id, true).then((next) => {
     snapshot.value = next
@@ -196,18 +135,6 @@ function complete(todo: TodoItem): void {
 
 function remove(todo: TodoItem): void {
   void window.petAPI.todo.remove(todo.id).then((next) => {
-    snapshot.value = next
-  })
-}
-
-function togglePin(note: StickyNote): void {
-  void window.petAPI.todo.toggleNotePin(note.id).then((next) => {
-    snapshot.value = next
-  })
-}
-
-function removeNote(note: StickyNote): void {
-  void window.petAPI.todo.removeNote(note.id).then((next) => {
     snapshot.value = next
   })
 }
@@ -230,14 +157,8 @@ onMounted(() => {
       snapshot.value = next
     })
   )
-  // 宠物右键「记一条待办…」→ 主进程要求把光标落到待办输入框。
-  // 顺带把页签切回待办：用户点的是"记一条待办"，不该停在便签页签上。
-  disposers.push(
-    window.petAPI.todo.onFocusQuickAdd(() => {
-      tab.value = 'todo'
-      focusQuickAdd()
-    })
-  )
+  // 宠物右键「记一条待办…」→ 主进程要求把光标落到快速录入框
+  disposers.push(window.petAPI.todo.onFocusQuickAdd(() => focusQuickAdd()))
   clock = setInterval(() => {
     now.value = Date.now()
   }, 30_000)
@@ -252,160 +173,71 @@ onBeforeUnmount(() => {
 <template>
   <div class="todo-root">
     <header class="todo-header">
-      <div class="todo-tabs">
-        <button
-          class="todo-tab"
-          :class="{ 'todo-tab--active': tab === 'todo' }"
-          title="未完成的待办"
-          @click="switchTab('todo')"
-        >
-          待办
-          <span class="todo-tab__count">{{ stats.active }}</span>
-        </button>
-        <button
-          class="todo-tab"
-          :class="{ 'todo-tab--active': tab === 'notes' }"
-          title="全部便签（置顶的排前面）"
-          @click="switchTab('notes')"
-        >
-          便签
-          <span class="todo-tab__count">{{ notes.length }}</span>
-        </button>
+      <div class="todo-header__title">
+        待办
+        <span class="todo-header__count">{{ stats.active }}</span>
       </div>
-      <button class="todo-header__close" title="关闭面板（数据仍在，可从托盘再打开）" @click="closePanel">
+      <button
+        class="todo-header__close"
+        title="关闭面板（待办还在，可从托盘或快捷键再打开）"
+        @click="closePanel"
+      >
         ✕
       </button>
     </header>
 
-    <!-- ---------------- 待办 ---------------- -->
-    <template v-if="tab === 'todo'">
-      <div class="todo-quick">
-        <!-- 优先级圆点。`@mousedown.prevent` 是必需的：不拦的话按下去光标就从输入框跑了，
-             用户点完圆点想接着打字还得再点一次输入框。 -->
-        <button
-          class="quick-priority"
-          :class="`quick-priority--${quickPriority}`"
-          :title="`优先级：${TODO_PRIORITY_LABEL[quickPriority]}（点击切换 低 → 普通 → 高）`"
-          @mousedown.prevent
-          @click="cyclePriority"
-        >
-          <span class="quick-priority__dot"></span>
-        </button>
-        <input
-          ref="inputRef"
-          v-model="quickTitle"
-          class="todo-quick__input"
-          type="text"
-          :maxlength="TODO_TITLE_MAX"
-          placeholder="记一条待办，回车添加"
-          @keydown.enter.prevent="addQuick"
-        />
-        <button
-          class="todo-btn todo-btn--primary"
-          :disabled="busy || quickTitle.trim().length === 0"
-          @click="addQuick"
-        >
-          添加
-        </button>
-      </div>
+    <div class="todo-quick">
+      <!-- 优先级圆点。`@mousedown.prevent` 是必需的：不拦的话按下去光标就从输入框跑了，
+           用户点完圆点想接着打字还得再点一次输入框。 -->
+      <button
+        class="quick-priority"
+        :class="`quick-priority--${quickPriority}`"
+        :title="`优先级：${TODO_PRIORITY_LABEL[quickPriority]}（点击切换 低 → 普通 → 高）`"
+        @mousedown.prevent
+        @click="cyclePriority"
+      >
+        <span class="quick-priority__dot"></span>
+      </button>
+      <input
+        ref="inputRef"
+        v-model="quickTitle"
+        class="todo-quick__input"
+        type="text"
+        :maxlength="TODO_TITLE_MAX"
+        placeholder="记一条待办，回车添加"
+        @keydown.enter.prevent="addQuick"
+      />
+      <button
+        class="todo-btn todo-btn--primary"
+        :disabled="busy || quickTitle.trim().length === 0"
+        @click="addQuick"
+      >
+        添加
+      </button>
+    </div>
 
-      <div class="todo-list">
-        <div v-if="rows.length === 0" class="todo-empty">
-          还没有未完成的待办<br />
-          在上面记一条，或用宠物右键「记一条待办…」
-        </div>
-        <div v-for="row in rows" :key="row.todo.id" class="todo-row">
-          <button class="todo-check" title="标记完成" @click="complete(row.todo)"></button>
-          <div class="todo-row__main">
-            <div class="todo-row__title">{{ row.todo.title }}</div>
-            <div v-if="row.chips.length > 0" class="todo-row__meta">
-              <span v-for="chip in row.chips" :key="chip.text" class="todo-chip" :class="chip.cls">
-                {{ chip.text }}
-              </span>
-            </div>
-          </div>
-          <button class="todo-row__del" title="删除" @click="remove(row.todo)">✕</button>
-        </div>
+    <div class="todo-list">
+      <div v-if="rows.length === 0" class="todo-empty">
+        还没有未完成的待办<br />
+        在上面记一条，或用宠物右键「记一条待办…」
       </div>
-    </template>
-
-    <!-- ---------------- 便签 ---------------- -->
-    <template v-else>
-      <div class="todo-quick todo-quick--stacked">
-        <div class="todo-quick__row">
-          <input
-            ref="noteInputRef"
-            v-model="quickNote"
-            class="todo-quick__input"
-            type="text"
-            :maxlength="NOTE_TEXT_MAX"
-            placeholder="记一条便签，回车添加"
-            @keydown.enter.prevent="addQuickNote"
-          />
-          <button
-            class="todo-btn todo-btn--primary"
-            :disabled="noteBusy || quickNote.trim().length === 0"
-            @click="addQuickNote"
-          >
-            添加
-          </button>
-        </div>
-        <!-- 挑颜色放在录入区第二行：便签页签的列表是两列卡片，纵向比待办页签宽裕，
-             挤进第一行会把输入框压到只剩八个字宽，不值得。 -->
-        <div class="note-colors">
-          <span class="note-colors__label">颜色</span>
-          <button
-            v-for="c in STICKY_COLORS"
-            :key="c"
-            class="note-color"
-            :class="{ 'note-color--on': quickNoteColor === c }"
-            :style="{ background: NOTE_SKIN[c].border }"
-            :title="`便签颜色：${NOTE_SKIN[c].label}`"
-            @mousedown.prevent
-            @click="quickNoteColor = c"
-          ></button>
-        </div>
-      </div>
-
-      <div class="todo-list">
-        <div v-if="notes.length === 0" class="todo-empty">
-          还没有便签<br />
-          在上面记一条，或到设置页挑个颜色
-        </div>
-        <div v-else class="note-grid">
-          <div
-            v-for="note in notes"
-            :key="note.id"
-            class="note-card"
-            :style="{ background: NOTE_SKIN[note.color].bg, borderColor: NOTE_SKIN[note.color].border }"
-          >
-            <span v-if="note.pinned" class="note-card__pin">置顶</span>
-            <div class="note-card__text">{{ note.text }}</div>
-            <div class="note-card__ops">
-              <button
-                class="note-card__op"
-                :class="{ 'note-card__op--on': note.pinned }"
-                :title="note.pinned ? '取消置顶' : '置顶'"
-                @click="togglePin(note)"
-              >
-                {{ note.pinned ? '★' : '☆' }}
-              </button>
-              <button class="note-card__op note-card__op--del" title="删除" @click="removeNote(note)">✕</button>
-            </div>
+      <div v-for="row in rows" :key="row.todo.id" class="todo-row">
+        <button class="todo-check" title="标记完成" @click="complete(row.todo)"></button>
+        <div class="todo-row__main">
+          <div class="todo-row__title">{{ row.todo.title }}</div>
+          <div v-if="row.chips.length > 0" class="todo-row__meta">
+            <span v-for="chip in row.chips" :key="chip.text" class="todo-chip" :class="chip.cls">
+              {{ chip.text }}
+            </span>
           </div>
         </div>
+        <button class="todo-row__del" title="删除" @click="remove(row.todo)">✕</button>
       </div>
-    </template>
+    </div>
 
     <footer class="todo-footer">
-      <template v-if="tab === 'todo'">
-        <span>今天到期 {{ stats.todayDue }} · 已过期 {{ stats.overdue }}</span>
-        <span>已完成 {{ stats.done }}</span>
-      </template>
-      <template v-else>
-        <span>共 {{ notes.length }} 张 · 置顶 {{ pinnedCount }}</span>
-        <span>颜色与正文在设置页改</span>
-      </template>
+      <span>今天到期 {{ stats.todayDue }} · 已过期 {{ stats.overdue }}</span>
+      <span>已完成 {{ stats.done }}</span>
     </footer>
   </div>
 </template>

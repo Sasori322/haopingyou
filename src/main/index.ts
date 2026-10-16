@@ -3,6 +3,8 @@ import type { BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { APP_ID } from '../shared/constants'
 import type { PetState } from '../shared/types/pet'
+import type { StickyColor } from '../shared/types/todo'
+import { STICKY_COLORS } from '../shared/types/todo'
 import { registerClipboardSchemes, flushClipboard } from './clipboard'
 import { unregisterAllHotkeys } from './services/globalHotkeys'
 import { petApp } from './pet/petApp'
@@ -16,13 +18,14 @@ import { registerIpc } from './services/ipcRegistry'
 import { reminderScheduler } from './services/reminderScheduler'
 import { flushSettings, getSettings, patchSettings } from './services/settingsService'
 import { createTray, destroyTray, refreshTray } from './services/tray'
-import { flushTodo } from './todo'
+import { flushTodo, todoRepo } from './todo'
 import { todoReminder } from './todo/todoReminder'
 import { createLogger } from './utils/logger'
 import { createPetWindow, getPetWindow, setPetVisible } from './windows/petWindow'
 import { openSettingsWindow } from './windows/settingsWindow'
 import { closeClipboardPanel } from './windows/clipboardWindow'
 import { closeTodoPanel, openTodoPanel } from './windows/todoPanelWindow'
+import { closeAllNoteWindows, createNoteOnDesktop, getNoteWindow, syncDesktopNotes } from './notes'
 
 const log = createLogger('main')
 
@@ -75,6 +78,9 @@ function start(): void {
     // 待办：截止提醒先停（免得退出过程中又投一次），再关面板、同步落盘
     todoReminder.stop()
     closeTodoPanel()
+    // 桌面便签：关窗时会把最后的位置/尺寸写回内存（拖动过程中是防抖的，可能还没落盘），
+    // 所以必须排在 flushTodoSafe 前面，否则"拖完立刻退出"会丢掉最后一次移动。
+    closeAllNoteWindows()
     flushTodoSafe()
     destroyTray()
   })
@@ -131,6 +137,9 @@ function onReady(): void {
   reminderScheduler.start()
   // 待办截止提醒：同样必须在 notifier 之后启动（一 tick 就可能往里投递）
   todoReminder.start()
+  // 桌面便签：把上次留在桌面上的那些重新贴出来。位置记在便签数据里，
+  // 所以不会像"每张都落在同一个点"那样糊成一摞（`initTodo` 已在 registerIpc 里跑过）。
+  syncDesktopNotes()
 
   // 剪贴板全局快捷键：注册由 initClipboard 内部完成（用设置里的 hotkey，
   // 而不是再写一份硬编码）。下面只是兜底：如果注册后又被用户改坏，记一行日志。
@@ -141,6 +150,7 @@ function onReady(): void {
   maybeProbeSettingsWindow()
   maybeCaptureSettingsWindow()
   maybeCaptureTodoPanel()
+  maybeCaptureNoteWindow()
   maybeVerifyPointerBridge()
 
   watchDisplayAndPower()
@@ -410,24 +420,22 @@ function maybeCaptureSettingsWindow(): void {
  * 只能看真实渲染；而它的入口是托盘菜单 + 宠物右键，手工路径很长。
  * 与 `HPY_CAPTURE_SETTINGS` 对称。
  *
- * 三个附加参数：
+ * 两个附加参数：
  * - `HPY_CAPTURE_TODO_PANEL_FOCUS=1`：把光标落到快速录入框；
- * - `HPY_CAPTURE_TODO_PANEL_TAB=notes`：直开便签页签（面板有两个页签，一张截图只能证实一个）；
  * - `HPY_CAPTURE_TODO_PANEL_EVAL=<js>`：在诊断脚本跑完之后、截图之前，再执行一段渲染层脚本
  *   （返回值同样打进日志）。**它会真的改数据**，所以配套用 `.tmp/seed-notes.mjs seed|restore`
  *   兜住用户数据。有了它，面板才有"渲染层 → IPC → 落盘 → 回快照"的端到端证据，
  *   否则这类改动只能靠肉眼看截图 —— 而截图看不出"点圆点后优先级是不是真的变了"。
  *
- * 诊断脚本会**依次点过两个页签**再还原，所以一次运行就能同时证实"页签能切""两个列表各自渲染出
- * 多少条"，截图拍的仍是进来时那个页签的原始状态。
+ * 诊断脚本现在顺带报一个 `tabs`：面板只剩待办，这个数**必须是 0**
+ * （便签在 2026-10-16 拆成了桌面上的独立窗口，页签控件一并删掉了）。
  */
 function maybeCaptureTodoPanel(): void {
   const target = process.env['HPY_CAPTURE_TODO_PANEL']
   if (!target) return
   const evalScript = process.env['HPY_CAPTURE_TODO_PANEL_EVAL']
   const win = openTodoPanel({
-    focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1',
-    initialTab: process.env['HPY_CAPTURE_TODO_PANEL_TAB'] === 'notes' ? 'notes' : undefined
+    focusQuickAdd: process.env['HPY_CAPTURE_TODO_PANEL_FOCUS'] === '1'
   })
   win.webContents.on('console-message', (event) => {
     log.info(`[todoPanel:${event.level}] ${event.message}`)
@@ -437,40 +445,16 @@ function maybeCaptureTodoPanel(): void {
       void win.webContents
         .executeJavaScript(
           `(async () => {
-            const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-            const tabText = () => {
-              const el = document.querySelector('.todo-tab--active')
+            const txt = (sel) => {
+              const el = document.querySelector(sel)
               return el ? el.textContent.replace(/\\s+/g, ' ').trim() : ''
             }
-            const btn = (kw) =>
-              Array.from(document.querySelectorAll('.todo-tab')).find((b) => b.textContent.includes(kw))
-            const notesBtn = btn('便签')
-            const todoBtn = btn('待办')
-            const tabAtEntry = tabText()
-            if (notesBtn) notesBtn.click()
-            await wait(80)
-            const notesTab = tabText()
-            const cards = document.querySelectorAll('.note-card').length
-            const pinned = document.querySelectorAll('.note-card__pin').length
-            const noteFooter = (document.querySelector('.todo-footer') || {}).textContent || ''
-            if (todoBtn) todoBtn.click()
-            await wait(80)
-            const todoTab = tabText()
-            const rows = document.querySelectorAll('.todo-row').length
-            const todoFooter = (document.querySelector('.todo-footer') || {}).textContent || ''
-            if (tabAtEntry.includes('待办') && todoBtn) todoBtn.click()
-            else if (tabAtEntry.includes('便签') && notesBtn) notesBtn.click()
-            await wait(80)
             return {
-              tabAtEntry: tabAtEntry,
-              tabAfterClickNotes: notesTab,
-              tabAfterClickTodo: todoTab,
-              tabAfterRestore: tabText(),
-              cards: cards,
-              pinned: pinned,
-              noteFooter: noteFooter.trim(),
-              rows: rows,
-              todoFooter: todoFooter.trim(),
+              title: txt('.todo-header__title'),
+              rows: document.querySelectorAll('.todo-row').length,
+              footer: txt('.todo-footer'),
+              // 必须为 0：便签已搬去桌面独立窗口，面板上不该再有页签
+              tabs: document.querySelectorAll('.todo-tab').length,
               active: document.activeElement ? document.activeElement.className : ''
             }
           })()`,
@@ -493,6 +477,95 @@ function maybeCaptureTodoPanel(): void {
         .catch((error: unknown) => log.warn('待办面板截图失败', error))
         .then(() => app.quit())
     }, 2200)
+  })
+}
+
+/**
+ * 开发期诊断：`HPY_CAPTURE_NOTE=<png>` 临时贴一张便签，截图后删掉再退出。
+ *
+ * 桌面便签是**独立窗口 + 透明 + 无边框**，几件事只能看真实渲染：四角圆角是不是真的
+ * （白圆角在浅色壁纸上的边界肉眼判不出来，得量像素）、投影有没有被窗口边界切掉、
+ * 正文在最小尺寸下会不会挤爆。而它的入口要摸托盘菜单、还得先点「贴到桌面」，手工路径很长。
+ *
+ * 附加参数：
+ * - `HPY_CAPTURE_NOTE_TEXT=<文本>` / `HPY_CAPTURE_NOTE_COLOR=<yellow|green|blue|pink|purple>`；
+ * - `HPY_CAPTURE_NOTE_EVAL=<js>`：截图前在**便签窗口自己的渲染层**里跑一段脚本
+ *   （返回值进日志）。用它验「在便签上直接改字 → 落盘 → 读回」这条链路，
+ *   或者点一下顶上的色点验「换纸色」。
+ *
+ * 数据安全：这张便签是**临时创建、截完即删**的，用户已有的便签一条都不动 ——
+ * 所以它不像面板的 `_EVAL` 那样需要配 seed / restore。
+ */
+function maybeCaptureNoteWindow(): void {
+  const target = process.env['HPY_CAPTURE_NOTE']
+  if (!target) return
+  const evalScript = process.env['HPY_CAPTURE_NOTE_EVAL']
+  const text = process.env['HPY_CAPTURE_NOTE_TEXT'] ?? '临时便签：这条截完图就会被删掉'
+  const colorRaw = process.env['HPY_CAPTURE_NOTE_COLOR'] ?? ''
+  const color: StickyColor = (STICKY_COLORS as readonly string[]).includes(colorRaw)
+    ? (colorRaw as StickyColor)
+    : 'yellow'
+
+  // 走**真实入口**（托盘「记一条便签」调的就是这个函数），而不是在这儿自己拼一遍
+  // addNote + syncDesktopNotes —— 否则钩子验的是一条只存在于钩子里的旁路。
+  // `HPY_CAPTURE_NOTE_FOCUS=1` 还能顺带验「光标自动落进正文」那条链路。
+  const noteId = createNoteOnDesktop(text, color, process.env['HPY_CAPTURE_NOTE_FOCUS'] === '1')
+  const win = getNoteWindow(noteId)
+  const cleanup = (): void => {
+    todoRepo().removeNote(noteId)
+    syncDesktopNotes()
+  }
+  if (!win) {
+    log.warn('便签窗口截图失败：窗口没有创建出来')
+    cleanup()
+    app.quit()
+    return
+  }
+  // ⚠️ 等 `ready-to-show` 而不是 `did-finish-load`：透明窗口在**真正显示之前没有可截的帧**，
+  // 这时候 `capturePage()` 会抛 `UnknownVizError`（本文件里第一次写就踩到了）。
+  // `ready-to-show` 一定晚于首帧渲染，所以 DOM 也必然是就绪的。
+  win.once('ready-to-show', () => {
+    setTimeout(() => {
+      void win.webContents
+        .executeJavaScript(
+          `(() => {
+            const box = document.querySelector('.note')
+            const text = document.querySelector('.note__text')
+            const cs = box ? getComputedStyle(box) : null
+            return {
+              value: text ? text.value : 'MISSING',
+              background: cs ? cs.backgroundColor : 'MISSING',
+              radius: cs ? cs.borderRadius : 'MISSING',
+              editable: text ? text.readOnly !== true : false,
+              dots: document.querySelectorAll('.note__dot').length,
+              activeDot: [...document.querySelectorAll('.note__dot')].findIndex((dot) =>
+                dot.classList.contains('note__dot--active')
+              ),
+              queryId: location.search
+            }
+          })()`,
+          true
+        )
+        .then(async (info: unknown) => {
+          log.info('[截图] 便签窗口', JSON.stringify(info))
+          if (evalScript) {
+            try {
+              const extra = await win.webContents.executeJavaScript(evalScript, true)
+              log.info('[截图] 便签窗口 EVAL', JSON.stringify(extra))
+            } catch (error: unknown) {
+              log.warn('[截图] 便签窗口 EVAL 抛错', error)
+            }
+          }
+          const image = await win.webContents.capturePage()
+          writeFileSync(target, image.toPNG())
+          log.info(`[截图] 已写入 ${target}`)
+        })
+        .catch((error: unknown) => log.warn('便签窗口截图失败', error))
+        .then(() => {
+          cleanup()
+          app.quit()
+        })
+    }, 900)
   })
 }
 

@@ -3,10 +3,13 @@
  * 待办与便签（设置页）。
  *
  * 分工：这一页是**认真管**的地方 —— 优先级、标签、截止时间、拖拽排序、便签都在这里；
- * 旁挂小面板只做"瞥一眼 / 勾掉 / 随手记一条"。
+ * 旁挂小面板只做"瞥一眼 / 勾掉 / 随手记一条"；桌面便签（一张一个窗口）负责"贴在那儿看得见"。
+ *
+ * 便签在这页上的额外职责：**挑选哪几张贴在桌面上**（每张卡片上的「贴到桌面 / 收起」）。
+ * 数据里的 `onDesktop` 是唯一开关，主进程据此对账窗口集合 —— 这里只管改数据。
  *
  * 数据全部经 `window.petAPI.todo.*`，每个写操作都返回最新快照，直接赋值即可；
- * `onChanged` 用来接住**另一个窗口**（旁挂面板）的改动。
+ * `onChanged` 用来接住**其它窗口**（旁挂面板、桌面便签自己在上面写字）的改动。
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -248,19 +251,24 @@ function openNoteEdit(note: StickyNote): void {
 }
 
 async function saveNote(): Promise<void> {
-  const text = noteEditForm.text.trim()
-  if (text.length === 0) {
-    ElMessage.warning('便签内容不能为空')
-    return
-  }
+  // 刻意**不拦空正文**：便签清空是合法状态（桌面便笺就是"写空了也留着"），
+  // 只有"新建"那条路才要求先有點内容，免得点一下多出一张空纸。
   applySnapshot(
-    await window.petAPI.todo.updateNote(noteEditId.value, { text, color: noteEditForm.color })
+    await window.petAPI.todo.updateNote(noteEditId.value, {
+      text: noteEditForm.text,
+      color: noteEditForm.color
+    })
   )
   noteEditVisible.value = false
 }
 
 function toggleNotePin(note: StickyNote): void {
   void window.petAPI.todo.toggleNotePin(note.id).then(applySnapshot)
+}
+
+/** 贴到桌面 / 从桌面收起。真正的开关窗由主进程按数据对账，这里只是改数据 */
+function toggleNoteDesktop(note: StickyNote): void {
+  void window.petAPI.todo.setNoteDesktop(note.id, !note.onDesktop).then(applySnapshot)
 }
 
 async function removeNote(note: StickyNote): Promise<void> {
@@ -297,7 +305,8 @@ onBeforeUnmount(() => {
 <template>
   <h2 class="page-title">待办与便签</h2>
   <p class="page-desc">
-    待办不会像剪贴板那样自动清理，写下的每一条都会保留。
+    待办不会像剪贴板那样自动清理，写下的每一条都会保留。<br />
+    便签贴在桌面上，每张各是一小块，能单独拖动、也能单独关掉。
   </p>
 
   <el-card class="section-card" shadow="never">
@@ -470,10 +479,20 @@ onBeforeUnmount(() => {
         class="note-card"
         :style="{ background: NOTE_SKIN[note.color].bg, borderColor: NOTE_SKIN[note.color].border }"
       >
-        <div class="note-card__text">{{ note.text }}</div>
+        <div class="note-card__text">{{ note.text || '（空便签）' }}</div>
         <div class="note-card__footer">
-          <span class="note-card__time">{{ formatDateTime(note.updatedAt) }}</span>
+          <span class="note-card__time">
+            {{ formatDateTime(note.updatedAt) }}<template v-if="note.onDesktop"> · 已贴桌面</template>
+          </span>
           <div class="note-card__actions">
+            <el-button
+              link
+              size="small"
+              :type="note.onDesktop ? 'primary' : ''"
+              @click="toggleNoteDesktop(note)"
+            >
+              {{ note.onDesktop ? '收起' : '贴到桌面' }}
+            </el-button>
             <el-button link size="small" @click="toggleNotePin(note)">
               {{ note.pinned ? '取消置顶' : '置顶' }}
             </el-button>

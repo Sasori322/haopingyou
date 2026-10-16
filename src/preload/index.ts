@@ -100,6 +100,8 @@ const api: PetApi = {
       ipcRenderer.invoke(IPC.TODO_NOTE_UPDATE, { id, patch }),
     removeNote: (id: string) => ipcRenderer.invoke(IPC.TODO_NOTE_REMOVE, id),
     toggleNotePin: (id: string) => ipcRenderer.invoke(IPC.TODO_NOTE_TOGGLE_PIN, id),
+    setNoteDesktop: (id: string, onDesktop: boolean) =>
+      ipcRenderer.invoke(IPC.TODO_NOTE_SET_DESKTOP, { id, onDesktop }),
     onChanged: (cb) => subscribe<TodoSnapshot>(IPC.TODO_CHANGED, cb),
     openPanel: (focusQuickAdd = false) =>
       ipcRenderer.send(IPC.TODO_OPEN_PANEL, { focusQuickAdd }),

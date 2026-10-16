@@ -55,10 +55,28 @@ export interface TodoRepository {
   updateNote(id: string, patch: StickyPatch): StickyNote | null
   removeNote(id: string): boolean
   setNotePinned(id: string, pinned: boolean): StickyNote | null
+  /** 贴到桌面 / 从桌面收起（不动正文与颜色） */
+  setNoteDesktop(id: string, onDesktop: boolean): StickyNote | null
+  /**
+   * 记下桌面便签窗口被拖到哪、拉成多大。
+   *
+   * 刻意**不返回**便签也不改 `updatedAt`：这两个字段是窗口自己的"住址"，
+   * 不是用户对便签内容的编辑 —— 拖一下位置就让它在"最近改过"里插队、还把新快照
+   * 广播给所有窗口，纯属噪声（拖动过程中会调很多次）。
+   */
+  setNoteRect(id: string, rect: NoteRect): void
 
   stats(): TodoStats
   /** 进程退出前同步落盘 */
   flush(): void
+}
+
+/** 桌面便签窗口的摆放（屏幕坐标 / DIP）。见 `StickyNote.setNoteRect` 的注释 */
+export interface NoteRect {
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
 /** 落盘结构。带 version 是为了将来换存储时能识别旧文件 */
@@ -199,7 +217,7 @@ export class JsonTodoRepository implements TodoRepository {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
         return b.updatedAt - a.updatedAt
       })
-      .map((n) => ({ ...n, color: n.color }))
+      .map((n) => ({ ...n }))
   }
 
   addNote(draft: StickyDraft): StickyNote {
@@ -210,7 +228,15 @@ export class JsonTodoRepository implements TodoRepository {
       color: draft.color,
       pinned: false,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      // 没说就不贴桌面是反的：「记一条便签」的意图本来就是"贴在那儿给我看见"。
+      // 只有设置页那种"先存着"的场景才显式传 false。
+      onDesktop: draft.onDesktop !== false,
+      // 位置留空 = 交给 `src/main/notes/` 挑个空位，别让新便签压住旧的
+      x: null,
+      y: null,
+      w: null,
+      h: null
     }
     this.notes.push(note)
     this.scheduleWrite()
@@ -222,6 +248,7 @@ export class JsonTodoRepository implements TodoRepository {
     if (!note) return null
     if (patch.text !== undefined) note.text = patch.text
     if (patch.color !== undefined) note.color = patch.color
+    if (patch.onDesktop !== undefined) note.onDesktop = patch.onDesktop
     note.updatedAt = Date.now()
     this.scheduleWrite()
     return { ...note }
@@ -242,6 +269,38 @@ export class JsonTodoRepository implements TodoRepository {
     note.updatedAt = Date.now()
     this.scheduleWrite()
     return { ...note }
+  }
+
+  setNoteDesktop(id: string, onDesktop: boolean): StickyNote | null {
+    const note = this.notes.find((n) => n.id === id)
+    if (!note) return null
+    // 本来就贴在外面又点了一次「贴到桌面」→ 不写盘、不动 updatedAt，
+    // 否则用户连点两下就会把这张便签顶到"最近改过"的最前面。
+    if (note.onDesktop !== onDesktop) {
+      note.onDesktop = onDesktop
+      note.updatedAt = Date.now()
+      this.scheduleWrite()
+    }
+    return { ...note }
+  }
+
+  setNoteRect(id: string, rect: NoteRect): void {
+    const note = this.notes.find((n) => n.id === id)
+    if (!note) return
+    if (
+      note.x === rect.x &&
+      note.y === rect.y &&
+      note.w === rect.w &&
+      note.h === rect.h
+    ) {
+      return
+    }
+    note.x = rect.x
+    note.y = rect.y
+    note.w = rect.w
+    note.h = rect.h
+    // 不碰 updatedAt：摆位置不是编辑内容。180ms 防抖会把拖动过程中的高频调用合并成一次落盘
+    this.scheduleWrite()
   }
 
   // ---------------- 统计 ----------------
@@ -391,12 +450,38 @@ function repairNote(raw: unknown): StickyNote | null {
   const n = raw as Record<string, unknown>
   const id = typeof n.id === 'string' && n.id.length > 0 ? n.id : null
   const text = typeof n.text === 'string' ? n.text.slice(0, NOTE_TEXT_MAX) : ''
-  if (!id || text.trim().length === 0) return null
+  // 只认 id：正文**可以是空的**。桌面便笺的语义就是"写空了也留着"，删不删由用户决定，
+  // 不该由数据层替他做主（待办标题就不同，空标题没有意义，那边仍然拒收）。
+  if (!id) return null
   const color: StickyColor =
     typeof n.color === 'string' && (STICKY_COLORS as readonly string[]).includes(n.color)
       ? (n.color as StickyColor)
       : 'yellow'
   const createdAt = isFiniteNumber(n.createdAt) ? n.createdAt : Date.now()
   const updatedAt = isFiniteNumber(n.updatedAt) ? n.updatedAt : createdAt
-  return { id, text, color, pinned: n.pinned === true, createdAt, updatedAt }
+  // `onDesktop` 缺字段 = 这份数据比"桌面便签"这个功能更早 → 一律当不贴桌面。
+  // 升级后桌面上不会凭空冒出一排纸条，要贴哪几张由用户自己点。
+  return {
+    id,
+    text,
+    color,
+    pinned: n.pinned === true,
+    createdAt,
+    updatedAt,
+    onDesktop: n.onDesktop === true,
+    ...readNoteRect(n)
+  }
+}
+
+/**
+ * 读出桌面便签窗口的摆放。**四个数缺一不可**：x/y/w/h 任意一个坏掉就整组作废，
+ * 交给主进程重新挑位置 —— 半组脏值（比如有 x 没 y）会让窗口落到屏幕外的怪地方，
+ * 用户只会看到"便签不见了"。
+ */
+function readNoteRect(n: Record<string, unknown>): Pick<StickyNote, 'x' | 'y' | 'w' | 'h'> {
+  const { x, y, w, h } = n
+  if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(w) && isFiniteNumber(h)) {
+    return { x, y, w, h }
+  }
+  return { x: null, y: null, w: null, h: null }
 }

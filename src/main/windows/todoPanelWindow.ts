@@ -10,7 +10,12 @@ let panelWindow: BrowserWindow | null = null
 let pendingFocusQuickAdd = false
 
 /**
- * 旁挂小面板。
+ * 旁挂小面板：**只放待办**。
+ *
+ * ## 便签已经搬走了（2026-10-16）
+ * 这里原本挂着第二个页签「便签」。便签的用途是"贴在那儿看得见"，被挤进 320px 的窄窗
+ * 里跟待办抢纵向空间、看一眼还要先切页签，反而把它最该有的样子弄丢了。
+ * 现在一张便签是一个独立窗口（`src/main/notes/` + `src/renderer/src/notes/`）。
  *
  * ## 为什么必须是独立窗口（而不是塞进设置页、也不是放大宠物窗口）
  * `docs/STATUS.md` 的原话是「独立窗口，**不放大宠物窗口的拦截面积**」。
@@ -41,17 +46,8 @@ const PANEL_W = 320
 const PANEL_H = 500
 /** 给投影留的透明边距，四边各一份（渲染层的 `.todo-root` 用 `inset` 对齐） */
 const PANEL_PAD = 8
-export function openTodoPanel(options?: {
-  focusQuickAdd?: boolean
-  /**
-   * 直开某个页签（渲染层读 `location.hash`）。
-   * **只在新建窗口时生效**：面板已经开着就只是把它唤到前面，不切页签
-   * —— 目前唯一的调用方是自检钩子，不值得为它多加一条 IPC。
-   */
-  initialTab?: 'todo' | 'notes'
-}): BrowserWindow {
+export function openTodoPanel(options?: { focusQuickAdd?: boolean }): BrowserWindow {
   const wantFocus = options?.focusQuickAdd === true
-  const initialTab = options?.initialTab
   const existing = getTodoPanel()
   if (existing) {
     if (existing.isMinimized()) existing.restore()
@@ -75,7 +71,7 @@ export function openTodoPanel(options?: {
     resizable: true,
     alwaysOnTop: true,
     maximizable: false,
-    title: '待办与便签',
+    title: '待办',
     // 透明窗口 + CSS 圆角：透明窗口的底色必须带 alpha，写 `#ffffff` 会把四角填成白色，
     // 圆角就白做了（`transparent` 与不透明背景色同时给，Windows 上以后者为准）。
     transparent: true,
@@ -119,14 +115,10 @@ export function openTodoPanel(options?: {
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
-  const hash = initialTab === 'notes' ? 'notes' : ''
   if (!app.isPackaged && devUrl) {
-    void win.loadURL(`${devUrl}/todo.html${hash ? `#${hash}` : ''}`)
+    void win.loadURL(`${devUrl}/todo.html`)
   } else {
-    void win.loadFile(
-      join(__dirname, '../renderer/todo.html'),
-      hash ? { hash } : undefined
-    )
+    void win.loadFile(join(__dirname, '../renderer/todo.html'))
   }
 
   panelWindow = win

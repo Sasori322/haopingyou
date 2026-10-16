@@ -148,6 +148,11 @@ export interface PetApi {
     updateNote(id: string, patch: StickyPatch): Promise<TodoSnapshot>
     removeNote(id: string): Promise<TodoSnapshot>
     toggleNotePin(id: string): Promise<TodoSnapshot>
+    /**
+     * 贴到桌面 / 从桌面收起。
+     * 贴出的便签**每张是一个独立小窗口**，可以直接在上面写字；收起只是不贴了，内容还在。
+     */
+    setNoteDesktop(id: string, onDesktop: boolean): Promise<TodoSnapshot>
     onChanged(cb: (snapshot: TodoSnapshot) => void): () => void
     /**
      * 打开旁挂小面板（已开则聚焦）。

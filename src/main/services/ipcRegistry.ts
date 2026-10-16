@@ -21,7 +21,8 @@ import type {
   StickyPatch,
   TodoDraft,
   TodoPatch,
-  TodoPriority
+  TodoPriority,
+  TodoSnapshot
 } from '../../shared/types/todo'
 import {
   clearClipboard,
@@ -51,6 +52,7 @@ import { todoReminder } from '../todo/todoReminder'
 import { getPetWindow, setPetVisible } from '../windows/petWindow'
 import { broadcast, openSettingsWindow } from '../windows/settingsWindow'
 import { openClipboardPanel, toggleClipboardPanel } from '../windows/clipboardWindow'
+import { syncDesktopNotes } from '../notes'
 import { openTodoPanel, toggleTodoPanel } from '../windows/todoPanelWindow'
 import { clamp } from '../utils/clamp'
 import { createLogger } from '../utils/logger'
@@ -181,11 +183,20 @@ function asTodoTitle(value: unknown): string | null {
   return text
 }
 
-/** 便签正文允许保留换行（便签就是要能分行的），只清掉换行以外的控制字符 */
-function asNoteText(value: unknown): string | null {
+/**
+ * 便签正文。允许保留换行（便签就是要能分行的），只清掉换行以外的控制字符。
+ *
+ * `allowEmpty` 是给"记一条便签"那条路用的：托盘点一下就在桌面上落一张空白便签、
+ * 光标已经在里面等着 —— 这才叫随手记，而不是"先想好再点新建"。
+ *
+ * 注意这里与**待办标题**的口径不同：待办标题空 = 没有意义，直接拒；
+ * 便签空 = 合法状态（桌面便笺就是"写空了也留着"，用户自己删）。
+ */
+function asNoteText(value: unknown, allowEmpty = false): string | null {
   if (typeof value !== 'string') return null
   const text = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim()
-  if (text.length === 0 || text.length > NOTE_TEXT_MAX) return null
+  if (text.length > NOTE_TEXT_MAX) return null
+  if (text.length === 0) return allowEmpty ? '' : null
   return text
 }
 
@@ -290,12 +301,19 @@ function asTodoPatch(value: unknown): TodoPatch | null {
 function asStickyDraft(value: unknown): StickyDraft | null {
   if (typeof value !== 'object' || value === null) return null
   const input = value as Record<string, unknown>
-  const text = asNoteText(input.text)
+  // 空白便签是合法的（「记一条便签」就落一张空的）
+  const text = asNoteText(input.text, true)
   if (text === null) {
-    log.warn('便签被拒：正文为空或过长')
+    log.warn('便签被拒：正文过长')
     return null
   }
-  return { text, color: asStickyColor(input.color) ?? 'yellow' }
+  return {
+    text,
+    color: asStickyColor(input.color) ?? 'yellow',
+    // 不传 = 贴到桌面（"记一条便签"的意图本来就是"贴在那儿给我看见"）；
+    // 只有显式传 false 才留在列表里不贴。非布尔值当"没传"处理，别用垃圾值把便签收进列表。
+    onDesktop: typeof input.onDesktop === 'boolean' ? input.onDesktop : undefined
+  }
 }
 
 function asStickyPatch(value: unknown): StickyPatch | null {
@@ -303,7 +321,8 @@ function asStickyPatch(value: unknown): StickyPatch | null {
   const input = value as Record<string, unknown>
   const patch: StickyPatch = {}
   if (input.text !== undefined) {
-    const text = asNoteText(input.text)
+    // 允许改成空白：用户全选删掉就该真的空掉，而不是"保存后内容又冒回来"
+    const text = asNoteText(input.text, true)
     if (text === null) return null
     patch.text = text
   }
@@ -312,7 +331,23 @@ function asStickyPatch(value: unknown): StickyPatch | null {
     if (color === null) return null
     patch.color = color
   }
+  if (input.onDesktop !== undefined) {
+    if (typeof input.onDesktop !== 'boolean') return null
+    patch.onDesktop = input.onDesktop
+  }
   return patch
+}
+
+/**
+ * 便签写操作之后的统一收尾。
+ *
+ * 顺序讲究：**先对账窗口集合，再广播快照**。`syncDesktopNotes()` 在贴出的便签
+ * 超过上限时会把多出来的那张改回"不贴桌面" —— 如果先广播再对账，渲染层收到的
+ * 快照就比真实状态旧一轮，用户会看到"设置页说贴着、桌面却没有"。
+ */
+function afterNoteWrite(): TodoSnapshot {
+  syncDesktopNotes()
+  return todoAfterWrite()
 }
 
 /** 白名单式校验 settings:patch，未知键一律丢弃，数值一律夹紧到合理区间 */
@@ -790,11 +825,13 @@ export function registerIpc(): void {
     return todoAfterWrite()
   })
 
+  // 便签的四个写操作都走 `afterNoteWrite()`（对账桌面窗口 + 广播）：
+  // 新增可能立刻贴出一张、更新可能改了正文或收起、删除必须把窗口关掉。
   ipcMain.handle(IPC.TODO_NOTE_ADD, (_event: IpcMainInvokeEvent, raw: unknown) => {
     const draft = asStickyDraft(raw)
     if (draft === null) return todoSnapshot()
     todoRepo().addNote(draft)
-    return todoAfterWrite()
+    return afterNoteWrite()
   })
 
   ipcMain.handle(IPC.TODO_NOTE_UPDATE, (_event: IpcMainInvokeEvent, raw: unknown) => {
@@ -803,14 +840,14 @@ export function registerIpc(): void {
     const patch = asStickyPatch(input?.patch)
     if (id === null || patch === null) return todoSnapshot()
     todoRepo().updateNote(id, patch)
-    return todoAfterWrite()
+    return afterNoteWrite()
   })
 
   ipcMain.handle(IPC.TODO_NOTE_REMOVE, (_event: IpcMainInvokeEvent, raw: unknown) => {
     const id = asString(raw, 64)
     if (id === null) return todoSnapshot()
     todoRepo().removeNote(id)
-    return todoAfterWrite()
+    return afterNoteWrite()
   })
 
   ipcMain.handle(IPC.TODO_NOTE_TOGGLE_PIN, (_event: IpcMainInvokeEvent, raw: unknown) => {
@@ -818,7 +855,17 @@ export function registerIpc(): void {
     if (id === null) return todoSnapshot()
     const note = todoRepo().listNotes().find((n) => n.id === id)
     if (note) todoRepo().setNotePinned(id, !note.pinned)
-    return todoAfterWrite()
+    return afterNoteWrite()
+  })
+
+  // 贴到桌面 / 收起。真正的开关窗都交给 `syncDesktopNotes()` 对账，
+  // 这里只负责把数据改对 —— 便签窗口自己的「收起」按钮走的也是这条。
+  ipcMain.handle(IPC.TODO_NOTE_SET_DESKTOP, (_event: IpcMainInvokeEvent, raw: unknown) => {
+    const input = raw as { id?: unknown; onDesktop?: unknown } | undefined
+    const id = asString(input?.id, 64)
+    if (id === null || typeof input?.onDesktop !== 'boolean') return todoSnapshot()
+    todoRepo().setNoteDesktop(id, input.onDesktop)
+    return afterNoteWrite()
   })
 
   // 打开旁挂面板；focusQuickAdd 只由「宠物右键 → 记一条待办」使用

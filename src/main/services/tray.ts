@@ -10,6 +10,10 @@ import { createLogger } from '../utils/logger'
 import { resourcePath } from '../utils/paths'
 import { isPetVisible, setPetVisible, togglePetVisible } from '../windows/petWindow'
 import { broadcast, openSettingsWindow } from '../windows/settingsWindow'
+import { NOTE_DESKTOP_MAX } from '../../shared/types/todo'
+import type { StickyNote } from '../../shared/types/todo'
+import { createNoteOnDesktop, syncDesktopNotes } from '../notes'
+import { todoAfterWrite, todoRepo } from '../todo'
 import { getAutostart, isAutostartSupported, setAutostart } from './autostart'
 import { immersiveWatcher } from './immersiveWatcher'
 import { notifier } from './notifier'
@@ -96,6 +100,49 @@ function dndMenuItems(): MenuItemConstructorOptions[] {
   ]
 }
 
+/**
+ * 便签入口。
+ *
+ * 便签从待办面板拆出去以后，"贴出来"这件事必须有个不依赖打开设置页的入口 ——
+ * 否则用户每次想让一张便签出现在桌面上，都得先开设置窗、再翻到待办页。
+ *
+ * 数据层没就绪时（理论上不会：托盘是在 `registerIpc` 之后才建的）不抛错，
+ * 只是这一组菜单项先空着 —— 一个读不到数据的下拉菜单不该把整份托盘菜单带崩。
+ */
+function noteMenuItems(): MenuItemConstructorOptions[] {
+  let notes: StickyNote[] = []
+  try {
+    notes = todoRepo().listNotes()
+  } catch {
+    return [{ label: '便签数据未就绪', enabled: false }]
+  }
+  const total = notes.length
+  const onDesktop = notes.filter((n) => n.onDesktop).length
+  const setAll = (on: boolean): void => {
+    for (const note of notes) todoRepo().setNoteDesktop(note.id, on)
+    // 先对账窗口再广播：超上限时 `syncDesktopNotes` 会把多出来的改回"不贴"，
+    // 先广播的话设置页会显示一份比真实状态旧一轮的快照
+    syncDesktopNotes()
+    todoAfterWrite()
+  }
+  return [
+    { label: '记一条便签…', click: () => createNoteOnDesktop() },
+    { type: 'separator' },
+    {
+      label: total === 0 ? '还没有便签' : `全部贴到桌面（${total} 张）`,
+      enabled: total > 0 && onDesktop < Math.min(total, NOTE_DESKTOP_MAX),
+      click: () => setAll(true)
+    },
+    {
+      label: onDesktop > 0 ? `全部收起（${onDesktop} 张）` : '全部收起',
+      enabled: onDesktop > 0,
+      click: () => setAll(false)
+    },
+    { type: 'separator' },
+    { label: '便签管理…', click: () => openSettingsWindow() }
+  ]
+}
+
 function buildTemplate(): MenuItemConstructorOptions[] {
   const pets = listPetSummaries()
 
@@ -151,7 +198,8 @@ function buildTemplate(): MenuItemConstructorOptions[] {
     ...dndMenuItems(),
     { type: 'separator' },
     { label: '剪贴板历史…', click: () => openClipboardPanel() },
-    { label: '待办与便签面板…', click: () => toggleTodoPanel() },
+    { label: '待办面板…', click: () => toggleTodoPanel() },
+    { label: '便签', submenu: noteMenuItems() },
     { type: 'separator' },
     { label: '设置…', click: () => openSettingsWindow() },
     {
@@ -229,6 +277,8 @@ export function popupPetMenu(): void {
     // 实现是"打开面板并把光标落到快速录入框"，而不是在菜单里做一个输入框 ——
     // 原生菜单承载不了带校验的文本输入，用完还得再想办法回收，不如复用面板。
     { label: '记一条待办…', click: () => openTodoPanel({ focusQuickAdd: true }) },
+    // 与上面那条对称：托盘点一下就落一张空白便签在桌面上，光标已经在里面等着
+    { label: '记一条便签…', click: () => createNoteOnDesktop() },
     { type: 'separator' },
     {
       label: '让宠物躲开',

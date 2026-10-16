@@ -146,6 +146,12 @@ export const IPC = {
   TODO_NOTE_UPDATE: 'todo:note-update',
   TODO_NOTE_REMOVE: 'todo:note-remove',
   TODO_NOTE_TOGGLE_PIN: 'todo:note-toggle-pin',
+  /**
+   * 贴到桌面 / 从桌面收起。
+   * 贴出的每张便签是一个**独立窗口**（见 `src/main/notes/`），
+   * 主进程收到后改数据 + 对账窗口集合。
+   */
+  TODO_NOTE_SET_DESKTOP: 'todo:note-set-desktop',
   /** 主进程 → 所有窗口：待办/便签数据变了（另一个窗口改的，或截止提醒改了标记） */
   TODO_CHANGED: 'todo:changed',
   /** 打开（或切换）旁挂小面板窗口 */

@@ -55,6 +55,8 @@ src/
 │  │  ├─ todoStore.ts           待办/便签的 Repository 接口 + JSON 原子写实现（换 SQLite 只改这一处）
 │  │  ├─ todoReminder.ts        截止提醒（比对绝对 dueAt，投递一律经 notifier）
 │  │  └─ index.ts               数据层出口：快照、写后广播、同步落盘
+│  ├─ notes/
+│  │  └─ index.ts               桌面便签：一张便签一个独立窗口，按数据对账（syncDesktopNotes）
 │  ├─ services/
 │  │  ├─ ipcRegistry.ts         全部 IPC 通道注册 + 入参白名单校验
 │  │  ├─ tray.ts                托盘菜单
@@ -71,7 +73,7 @@ src/
 │  └─ utils/                    clamp / logger / paths / throttle
 ├─ preload/index.ts             contextBridge → window.petAPI + .clipboard + .todo（白名单）
 ├─ renderer/
-│  ├─ pet.html / settings.html / clipboard.html / todo.html   四个独立渲染入口
+│  ├─ pet.html / settings.html / clipboard.html / todo.html / notes.html   五个独立渲染入口
 │  └─ src/
 │     ├─ common/todo-date.ts    待办时间展示（设置页与面板共用，保证"已过期"口径一致）
 │     ├─ common/note-skin.ts    便签纸色（同上，两处共用，避免配色漂移）
@@ -86,7 +88,8 @@ src/
 │     ├─ settings/              设置窗口（Vue Router hash + Pinia + Element Plus）
 │     │  └─ components/HotkeyRecorder.vue  全局快捷键录制控件（剪贴板 / 待办两个设置页共用）
 │     ├─ clipboard/             剪贴板历史面板（不引 Element Plus，纯 CSS + Vue，键盘导航）
-│     └─ todo-panel/            旁挂面板（同上，纯 CSS + Vue）：待办 / 便签两个页签，常驻可见
+│     ├─ todo-panel/            旁挂待办面板（同上，纯 CSS + Vue）：只剩待办，常驻可见
+│     └─ notes/                 桌面便签（一张便签一个独立窗口；可以直接在上面写字、点顶上圆点换纸色）
 ├─ shared/                      主 / preload / 渲染三方共享：仅类型与常量
 resources/
 ├─ pets/cat|dog|siamese/manifest.json   宠物清单（`cat` / `siamese` 的 PNG 已就绪即序列帧模式）
@@ -337,7 +340,7 @@ npm run icons:build   # → build/icon.png、build/icon.ico（16–256 多尺寸
 | **M2.5 鼠标跟随 + 沉浸躲开** | ✅ | 见 `docs/STATUS.md` 第二部分 |
 | **M3 久坐 / 喝水 / 投递层** | ✅ | 加速模式下出 7/7 实机自检。投递层 + 免打扰（丢弃不补发） + 沉浸挂起（补发最近一条） |
 | **M3.5 剪贴板历史** | ✅ | 2026-10-15：800ms 轮询 + 100/30 天 + pinned，clipboard-img:// 协议 + Ctrl+Shift+V 面板。**2026-10-15 二轮**：自定义存储目录（绝对路径校验）+ 自定义唤起快捷键（format + register-noop 试探，可禁用）。**2026-10-15 三轮**：录制热键（e.code 翻译物理键 + IPC suspend/resend 旧键避免误触）。`docs/STATUS.md` 第二部分"已完成 · 5"展开 |
-| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口，**待办 / 便签两个页签**）+ 宠物右键快速记一条 + 截止提醒（经投递层）+ **面板全局快捷键（可自定义，默认 Ctrl+Alt+T）**。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
+| **M3.6 待办与便签** | ✅ | 2026-10-15：Repository 接口层 + 待办（优先级/标签/截止时间/拖拽排序/完成统计）+ 便签（速记/置顶/颜色）+ 旁挂面板（独立窗口）+ 宠物右键快速记一条 + 截止提醒（经投递层）+ **面板全局快捷键（可自定义，默认 Ctrl+Alt+T）**。<br>2026-10-16：**便签从面板里拆出来，改成"一张便签一个独立窗口"** —— 贴在桌面上、可以直接在上面写字、各自单独关掉；面板回到只放待办。`docs/STATUS.md` 第二部分"已完成 · 6"展开 |
 | M3.x 番茄钟 / 系统监控 | 待做 | 设置项齐全，逻辑未接 |
 | M4 打包发布 | 待办 | NSIS / portable 实机验证、图标、SmartScreen 说明 |
 
@@ -374,7 +377,8 @@ HPY_CAPTURE_PET="$PWD/.workbuddy/pet-capture.png" npm run dev
 | `HPY_FORCE_STATE=<状态名>` | 把宠物**钉在指定状态**（每 200ms 重设一次，否则会被行为调度器抢走）。给姿态族做尺寸 / 观感裁定时用——窗口尺寸固定，逐族截图并排就是用户视角 |
 | `HPY_OPEN_SETTINGS=1` | 自动打开设置窗口、把渲染层 console 转发到主进程日志、逐个路由 dump DOM 证据后退出（设置页只能从托盘进，手工路径太长；而「页面空白」和「只是没数据」在日志里长得一样） |
 | `HPY_CAPTURE_SETTINGS=<路径>` | 打开设置窗口截图后退出。配 `_ROUTE=<hash 路由>` 直开某一页、`_WAIT=<选择器>` 等标志物出现再截、`_SCROLL=<选择器>` 先滚过去、`_EVAL=<js>` 在页面里跑一段代码——**这是唯一能端到端验证「渲染层 → preload → IPC → 落盘 → 广播回渲染层」的手段** |
-| `HPY_CAPTURE_TODO_PANEL=<路径>` | 打开旁挂面板截图后退出。配 `_FOCUS=1` 验「宠物右键 → 光标落到快速录入框」、`_TAB=notes` 直开便签页签、`_EVAL=<js>` 在截图前再跑一段渲染层脚本（⚠️ 会真写数据，用 `.tmp/seed-notes.mjs` 兜底）。诊断脚本会**依次点过两个页签再还原**，所以一次运行同时证实「页签能切」和「两个列表各渲染了多少条」 |
+| `HPY_CAPTURE_TODO_PANEL=<路径>` | 打开旁挂面板截图后退出。配 `_FOCUS=1` 验「宠物右键 → 光标落到快速录入框」、`_EVAL=<js>` 在截图前再跑一段渲染层脚本（⚠️ 会真写数据，用 `.tmp/seed-notes.mjs` 兜底）。诊断结果里的 `tabs` 必须是 **0** —— 面板已无页签 |
+| `HPY_CAPTURE_NOTE=<路径>` | 临时贴一张便签、截图、删掉。走的是真实入口（托盘「记一条便签」用的同一个函数），**用户自己的便签不受影响**。配 `_TEXT` / `_COLOR` / `_FOCUS=1`（验光标自动落进正文）/ `_EVAL=<js>`（在便签自己的渲染层里跑，验「直接改字」或「点圆点换纸色」→ 落盘 → 读回）。诊断里的 `dots` / `activeDot` 是顶部色点是否渲染对、当前色是哪一个 |
 | `HPY_FAST_REMIND=1` | 把提醒阈值从分钟压到秒（久坐 20s / 喝水 25s / 离开判定 45s）。**三者的相对大小关系不能乱改**，否则加速模式自己就不可测了 |
 | `HPY_DEBUG_GAZE=1` | 打印鼠标跟随的采样日志（光标位置 / 观察原点 / 距离 / 量化后的方位） |
 | `HPY_DEBUG_POINTER=1` | 打印**穿透态的每次切换**（穿透 ↔ 可交互）。只在「进入 / 离开命中区」两个边沿触发，条数与鼠标行为同阶、不刷屏。**排查「宠物点不动 / 拖不动」先看它**：显示之后若一直停在「穿透」，就是两段式握手的回边断了 |
